@@ -69,19 +69,55 @@ for base_name, base_id in BASES.items():
     session = requests.Session()
     session.auth = ("api_bot", "slavaperfilev1414")
 
-    base_data = {}
+    base_data = {
+        "sales_today": 0,
+        "sales_week": 0,
+        "sales_month": 0,
+        "avg_check": 0,
+        "avg_indicator": 0,
+        "potential": 0,
+        "total_debt": 0,
+        "overdue_debt": 0,
+        "growing_customers": 0,
+        "falling_customers": 0,
+        "static_customers": 0,
+        "top_debtors": []
+    }
+
     endpoints = ["reports/sales", "reports/customers", "reports/debtors"]
 
     for endpoint in endpoints:
         try:
             url = f"https://base.42clouds.com/api/v1/bases/{base_id}/{endpoint}"
             response = session.get(url, timeout=10)
-            base_data[endpoint] = response.status_code == 200
-            status = "✅" if response.status_code == 200 else "⚠️"
-            print(f"      {status} {endpoint}")
+
+            if response.status_code == 200:
+                print(f"      ✅ {endpoint}")
+                # Пытаемся парсить данные если это JSON
+                try:
+                    data = response.json()
+                    if isinstance(data, dict):
+                        if "sales" in endpoint:
+                            base_data["sales_today"] = data.get("today", 0)
+                            base_data["sales_week"] = data.get("week", 0)
+                            base_data["sales_month"] = data.get("month", 0)
+                            base_data["avg_check"] = data.get("avg_check", 0)
+                            base_data["potential"] = data.get("potential", 0)
+                        elif "customers" in endpoint:
+                            base_data["growing_customers"] = data.get("growing", 0)
+                            base_data["falling_customers"] = data.get("falling", 0)
+                            base_data["static_customers"] = data.get("static", 0)
+                        elif "debtors" in endpoint:
+                            base_data["total_debt"] = data.get("total", 0)
+                            base_data["overdue_debt"] = data.get("overdue", 0)
+                            base_data["top_debtors"] = data.get("top_debtors", [])
+                except:
+                    pass
+            else:
+                print(f"      ⚠️  {endpoint}: {response.status_code}")
+
         except Exception as e:
             print(f"      ❌ {endpoint}: {str(e)[:30]}")
-            base_data[endpoint] = False
 
     all_data[base_name] = base_data
     print()
@@ -90,6 +126,19 @@ for base_name, base_id in BASES.items():
 print("3️⃣  Форматирую отчет...")
 
 today = datetime.now().strftime("%d.%m.%Y")
+
+def format_money(value):
+    """Форматирование денег"""
+    if isinstance(value, (int, float)):
+        return f"₽{value:,.0f}".replace(',', ' ')
+    return str(value)
+
+perf_data = all_data.get("Перфильев", {})
+gub_data = all_data.get("Губарев", {})
+
+total_sales_today = perf_data.get("sales_today", 0) + gub_data.get("sales_today", 0)
+total_debt = perf_data.get("total_debt", 0) + gub_data.get("total_debt", 0)
+total_overdue = perf_data.get("overdue_debt", 0) + gub_data.get("overdue_debt", 0)
 
 report = f"""
 ╔════════════════════════════════════════╗
@@ -100,67 +149,56 @@ report = f"""
 📊 ПРОДАЖИ
 
 🏢 ИП ПЕРФИЛЬЕВ:
-  • Продажи сегодня: 💰
-  • Средний чек: 💵
-  • Средний показатель: 📈
-  • Потенциальный оборот: 🚀
+  • Продажи сегодня: {format_money(perf_data.get('sales_today', 0))}
+  • Средний чек: {format_money(perf_data.get('avg_check', 0))}
+  • Продажи неделя: {format_money(perf_data.get('sales_week', 0))}
+  • Потенциальный оборот: {format_money(perf_data.get('potential', 0))}
 
 🏢 ИП ГУБАРЕВ:
-  • Продажи сегодня: 💰
-  • Средний чек: 💵
-  • Средний показатель: 📈
-  • Потенциальный оборот: 🚀
+  • Продажи сегодня: {format_money(gub_data.get('sales_today', 0))}
+  • Средний чек: {format_money(gub_data.get('avg_check', 0))}
+  • Продажи неделя: {format_money(gub_data.get('sales_week', 0))}
+  • Потенциальный оборот: {format_money(gub_data.get('potential', 0))}
 
 📊 ИТОГО:
-  • Общие продажи: 💰💰
-  • Средний чек по компании: 💵
-  • Средний показатель: 📈
+  • Общие продажи сегодня: {format_money(total_sales_today)}
+  • Месячные продажи: {format_money(perf_data.get('sales_month', 0) + gub_data.get('sales_month', 0))}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 💳 ЗАДОЛЖЕННОСТЬ ПОКУПАТЕЛЕЙ
 
 🏢 ИП ПЕРФИЛЬЕВ:
-  • Общая дебиторка: 💳
-  • Просроченная: 🔴
-  • Топ 10 должников: 🔝
+  • Общая дебиторка: {format_money(perf_data.get('total_debt', 0))}
+  • Просроченная: 🔴 {format_money(perf_data.get('overdue_debt', 0))}
 
 🏢 ИП ГУБАРЕВ:
-  • Общая дебиторка: 💳
-  • Просроченная: 🔴
-  • Топ 10 должников: 🔝
+  • Общая дебиторка: {format_money(gub_data.get('total_debt', 0))}
+  • Просроченная: 🔴 {format_money(gub_data.get('overdue_debt', 0))}
 
-📊 ИТОГО ДЕБИТОРКА: 💳💳
+📊 ИТОГО ДЕБИТОРКА: {format_money(total_debt)}
+   Просроченная: 🔴 {format_money(total_overdue)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 👥 ДИНАМИКА ПО КЛИЕНТАМ
 
 🏢 ИП ПЕРФИЛЬЕВ:
-  • Растущие клиенты: 📈
-  • Падающие клиенты: 📉
-  • Статичные: →
+  • Растущие: 📈 {perf_data.get('growing_customers', 0)} клиентов
+  • Падающие: 📉 {perf_data.get('falling_customers', 0)} клиентов
+  • Статичные: → {perf_data.get('static_customers', 0)} клиентов
 
 🏢 ИП ГУБАРЕВ:
-  • Растущие клиенты: 📈
-  • Падающие клиенты: 📉
-  • Статичные: →
+  • Растущие: 📈 {gub_data.get('growing_customers', 0)} клиентов
+  • Падающие: 📉 {gub_data.get('falling_customers', 0)} клиентов
+  • Статичные: → {gub_data.get('static_customers', 0)} клиентов
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-🏗️ СИСТЕМА СТАТУС:
+🏗️ СИСТЕМА:
   ✅ 1С API: Подключена
-  ✅ Google Sheets: Синхронизирована
   ✅ GitHub Actions: Работает
   ✅ Telegram: Активен
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📞 Команды:
-/today - отчет на сегодня
-/week - за неделю
-/month - за месяц
-/debtors - ТОП 10 должников
 """
 
 print("   ✅ Отчет готов")
