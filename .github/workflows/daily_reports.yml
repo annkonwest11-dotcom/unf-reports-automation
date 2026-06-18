@@ -1,0 +1,48 @@
+name: UNF Daily Reports
+
+# Запускается каждый день в 09:30 МСК (06:30 UTC)
+on:
+  schedule:
+    - cron: '30 6 * * *'
+
+  # Позволяет запустить вручную через GitHub Actions UI
+  workflow_dispatch:
+
+jobs:
+  send_reports:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install gspread google-auth-oauthlib google-auth requests
+
+      - name: Run UNF Reports Script
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          # Сохраняем Google credentials
+          echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
+
+          # Запускаем скрипт отчетов
+          python ./scripts/generate_reports.py
+
+      - name: Notify on success
+        if: success()
+        run: echo "✅ Отчет успешно отправлен в Telegram"
+
+      - name: Notify on failure
+        if: failure()
+        run: echo "❌ Ошибка при отправке отчета"
