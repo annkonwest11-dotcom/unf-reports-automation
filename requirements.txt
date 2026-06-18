@@ -1,0 +1,7 @@
+python-telegram-bot[job-queue]==20.7
+gspread==6.1.2
+google-auth==2.29.0
+python-dotenv==1.0.1
+selenium>=4.0.0
+webdriver-manager>=3.8.0
+beautifulsoup4>=4.11.0
