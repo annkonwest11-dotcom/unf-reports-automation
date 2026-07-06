@@ -135,7 +135,7 @@ def insert_to_sheets(spreadsheet_id, sheet_name, range_name, data, start_row=4):
     cell_range = f"A{start_row}:{end_col}{end_row}"
 
     try:
-        worksheet.update(cell_range, data)
+        worksheet.update(data, cell_range)
         logger.info(f"Data inserted successfully: {len(data)} rows × {max_cols} cols into {cell_range}")
         return True
     except Exception as e:

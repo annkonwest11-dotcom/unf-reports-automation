@@ -77,7 +77,7 @@ def _strip_month(period: str) -> tuple[str, int | None]:
 
 def _parse_day_range(period: str) -> set[int]:
     stripped, _ = _strip_month(period)
-    stripped = stripped.strip(' .,')
+    stripped = re.sub(r'\b\d{4}\b', '', stripped).strip(' .,')
 
     if not stripped:
         return set(range(1, 32))
@@ -96,7 +96,7 @@ def _parse_day_range(period: str) -> set[int]:
 def _format_period_label(period: str) -> str:
     now = datetime.now()
     stripped, month_num = _strip_month(period)
-    stripped = stripped.strip(' .,')
+    stripped = re.sub(r'\b\d{4}\b', '', stripped).strip(' .,')
     month = month_num or now.month
     year = now.year
 
@@ -457,7 +457,7 @@ class SheetsClient:
         ws_smeny = sh.worksheet('СМЕНЫ')
         ws_smeny.batch_clear(['E5:AI13', 'E18:AI21'])
         next_label = _next_month_label(period)
-        ws_smeny.update('A2', next_label)
+        ws_smeny.update([[next_label]], 'A2')
 
         # Clear ДАННЫЕ_Губарев and ДАННЫЕ_Перфильев data rows
         for sheet_name in ('ДАННЫЕ_Губарев', 'ДАННЫЕ_Перфильев'):
@@ -481,10 +481,10 @@ class SheetsClient:
         ws_sv.batch_clear(manual_ranges)
 
         # Update period in НАСТРОЙКИ
-        ws_settings.update('B4', next_label)
+        ws_settings.update([[next_label]], 'B4')
 
         # Invalidate cached СМЕНЫ worksheet
         self._ws = None
 
         logger.info("Month archived: %s → next period: %s", period, next_label)
-        return period, archive_url
+        return period
