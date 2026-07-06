@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>КПИ Дашборд</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: #f0f4f8;
+    color: #1e293b;
+    min-height: 100vh;
+  }
+
+  /* Header */
+  .header {
+    background: linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 60%, #3b82f6 100%);
+    padding: 28px 40px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 4px 20px rgba(30,58,138,0.3);
+  }
+  .header-title { color: #fff; }
+  .header-title h1 { font-size: 22px; font-weight: 800; letter-spacing: -0.3px; }
+  .header-title p { font-size: 13px; color: rgba(255,255,255,0.7); margin-top: 3px; }
+  .header-badge {
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    padding: 8px 18px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid rgba(255,255,255,0.25);
+    backdrop-filter: blur(10px);
+  }
+
+  /* Main */
+  .main { padding: 32px 40px; max-width: 1200px; margin: 0 auto; }
+
+  /* Section */
+  .section { margin-bottom: 36px; }
+  .section-title {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #64748b;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: #e2e8f0;
+  }
+
+  /* KPI Cards */
+  .cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+
+  .kpi-card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.07), 0 4px 16px rgba(0,0,0,0.04);
+    border: 1px solid #f1f5f9;
+    transition: transform 0.2s, box-shadow 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .kpi-card:hover { transform: translateY(-2px); box-shadow: 0 4px 24px rgba(0,0,0,0.1); }
+  .kpi-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 4px;
+    background: var(--card-color, #3b82f6);
+  }
+
+  .card-label { font-size: 12px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card-name { font-size: 15px; font-weight: 700; color: #1e293b; margin-top: 4px; }
+  .card-metric { font-size: 12px; color: #64748b; margin-top: 2px; }
+
+  .card-values { display: flex; gap: 24px; margin-top: 18px; }
+  .card-val { }
+  .card-val .val-label { font-size: 11px; color: #94a3b8; font-weight: 500; }
+  .card-val .val-num { font-size: 20px; font-weight: 800; color: #1e293b; margin-top: 2px; line-height: 1; }
+  .card-val .val-num.fact { color: var(--card-color, #3b82f6); }
+
+  .progress-wrap { margin-top: 18px; }
+  .progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .progress-label { font-size: 11px; color: #94a3b8; }
+  .progress-pct {
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--pct-color, #3b82f6);
+  }
+  .progress-bar {
+    height: 8px;
+    background: #f1f5f9;
+    border-radius: 99px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    border-radius: 99px;
+    background: var(--card-color, #3b82f6);
+    transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+    min-width: 0;
+  }
+
+  /* Chart card */
+  .chart-card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 28px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.07), 0 4px 16px rgba(0,0,0,0.04);
+    border: 1px solid #f1f5f9;
+  }
+  .chart-card h3 { font-size: 15px; font-weight: 700; color: #1e293b; margin-bottom: 6px; }
+  .chart-card p { font-size: 12px; color: #94a3b8; margin-bottom: 20px; }
+  .chart-wrap { position: relative; height: 260px; }
+
+  /* Manager row cards */
+  .manager-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; }
+  .manager-card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 16px 20px;
+    border: 1px solid #f1f5f9;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .manager-card .m-name { font-size: 13px; font-weight: 700; color: #1e293b; }
+  .manager-card .m-row { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+  .manager-card .m-row .m-key { font-size: 11px; color: #94a3b8; }
+  .manager-card .m-row .m-val { font-size: 13px; font-weight: 700; color: #1e293b; }
+
+  /* Loading */
+  .loading {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 60vh; gap: 16px;
+  }
+  .spinner {
+    width: 40px; height: 40px;
+    border: 3px solid #e2e8f0;
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading p { color: #64748b; font-size: 14px; }
+
+  .green { --card-color: #10b981; }
+  .yellow { --card-color: #f59e0b; }
+  .red { --card-color: #ef4444; }
+  .blue { --card-color: #3b82f6; }
+  .purple { --card-color: #8b5cf6; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-title">
+    <h1>KPI ОТДЕЛ ПРОДАЖ ДАШБОРД</h1>
+    <p>Обновляется автоматически из Google Таблицы</p>
+  </div>
+  <div class="header-badge" id="monthBadge">Загрузка...</div>
+</div>
+
+<div class="main" id="main">
+  <div class="loading">
+    <div class="spinner"></div>
+    <p>Загружаем данные...</p>
+  </div>
+</div>
+
+<script>
+function fmt(n) {
+  if (!n && n !== 0) return '—';
+  return Number(n).toLocaleString('ru-RU', { maximumFractionDigits: 0 });
+}
+
+function pctColor(p) {
+  var v = parseFloat(p) || 0;
+  if (v >= 1) return 'green';
+  if (v >= 0.7) return 'yellow';
+  return 'red';
+}
+
+function pctStr(p) {
+  var v = parseFloat(p) || 0;
+  return (v * 100).toFixed(1) + '%';
+}
+
+function pctWidth(p) {
+  var v = parseFloat(p) || 0;
+  return Math.min(v * 100, 100) + '%';
+}
+
+function makeKpiCard(name, metric, plan, fact, pct, colorClass) {
+  var cls = colorClass || pctColor(pct);
+  return `
+    <div class="kpi-card ${cls}">
+      <div class="card-label">${metric}</div>
+      <div class="card-name">${name}</div>
+      <div class="card-values">
+        <div class="card-val">
+          <div class="val-label">План</div>
+          <div class="val-num">${fmt(plan)}</div>
+        </div>
+        <div class="card-val">
+          <div class="val-label">Факт</div>
+          <div class="val-num fact">${fmt(fact)}</div>
+        </div>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-header">
+          <span class="progress-label">Выполнение плана</span>
+          <span class="progress-pct" style="color:${cls==='green'?'#10b981':cls==='yellow'?'#f59e0b':'#ef4444'}">${pctStr(pct)}</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" style="width:${pctWidth(pct)};background:${cls==='green'?'#10b981':cls==='yellow'?'#f59e0b':'#ef4444'}"></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function render(data) {
+  document.getElementById('monthBadge').textContent = data.month || 'Текущий месяц';
+
+  var html = '';
+
+  // ── РОП ──
+  html += '<div class="section">';
+  html += '<div class="section-title">РОП — Анна Кононенко</div>';
+  html += '<div class="cards-grid">';
+  var colors = ['blue', 'purple', 'blue'];
+  data.rop.metrics.forEach(function(m, i) {
+    html += makeKpiCard('Анна Кононенко (РОП)', m.metric, m.plan, m.fact, m.pct, colors[i]);
+  });
+  html += '</div></div>';
+
+  // ── Менеджеры поиска — график ──
+  html += '<div class="section">';
+  html += '<div class="section-title">Менеджеры поиска — новые продажи</div>';
+  html += '<div class="chart-card">';
+  html += '<h3>План vs Факт (новые клиенты)</h3>';
+  html += '<p>Сравнение плановых и фактических новых продаж за месяц</p>';
+  html += '<div class="chart-wrap"><canvas id="poiskChart"></canvas></div>';
+  html += '</div>';
+
+  // Карточки по каждому менеджеру
+  html += '<div class="manager-grid">';
+  data.poisk.forEach(function(p) {
+    var cls = pctColor(p.pct);
+    var barColor = cls === 'green' ? '#10b981' : cls === 'yellow' ? '#f59e0b' : '#ef4444';
+    html += `
+      <div class="manager-card">
+        <div class="m-name">${p.name}</div>
+        <div class="progress-wrap" style="margin-top:12px">
+          <div class="progress-header">
+            <span class="progress-label">${fmt(p.fact)} / ${fmt(p.plan)}</span>
+            <span style="font-size:15px;font-weight:800;color:${barColor}">${pctStr(p.pct)}</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" style="width:${pctWidth(p.pct)};background:${barColor}"></div>
+          </div>
+        </div>
+        <div class="m-row">
+          <span class="m-key">Фикс бонус</span>
+          <span class="m-val">${fmt(p.bonus)} ₽</span>
+        </div>
+        <div class="m-row">
+          <span class="m-key">Ставка % от оплат</span>
+          <span class="m-val">${(p.rate * 100).toFixed(0)}%</span>
+        </div>
+      </div>`;
+  });
+  html += '</div></div>';
+
+  // ── Менеджеры сопровождения ──
+  html += '<div class="section">';
+  html += '<div class="section-title">Менеджеры сопровождения — оплаты</div>';
+  html += '<div class="cards-grid">';
+  data.soprov.forEach(function(s) {
+    html += makeKpiCard(s.name, 'Оплаты ресторанов', s.plan, s.fact, s.pct);
+  });
+  html += '</div></div>';
+
+  // ── Помощник ──
+  if (data.helper) {
+    html += '<div class="section">';
+    html += '<div class="section-title">Помощник руководителя</div>';
+    html += '<div class="cards-grid" style="grid-template-columns:280px">';
+    html += `
+      <div class="kpi-card blue">
+        <div class="card-label">Итого ЗП</div>
+        <div class="card-name">${data.helper.name}</div>
+        <div class="card-values">
+          <div class="card-val">
+            <div class="val-label">Начислено</div>
+            <div class="val-num fact">${fmt(data.helper.fact)} ₽</div>
+          </div>
+        </div>
+      </div>`;
+    html += '</div></div>';
+  }
+
+  document.getElementById('main').innerHTML = html;
+
+  // ── График поиска ──
+  var names = data.poisk.map(function(p) { return p.name.split(' ')[0]; });
+  var plans = data.poisk.map(function(p) { return p.plan; });
+  var facts = data.poisk.map(function(p) { return p.fact; });
+
+  new Chart(document.getElementById('poiskChart'), {
+    type: 'bar',
+    data: {
+      labels: names,
+      datasets: [
+        {
+          label: 'План',
+          data: plans,
+          backgroundColor: 'rgba(59,130,246,0.15)',
+          borderColor: '#3b82f6',
+          borderWidth: 2,
+          borderRadius: 6,
+        },
+        {
+          label: 'Факт',
+          data: facts,
+          backgroundColor: facts.map(function(f, i) {
+            var r = f / plans[i];
+            return r >= 1 ? 'rgba(16,185,129,0.8)' : r >= 0.7 ? 'rgba(245,158,11,0.8)' : 'rgba(239,68,68,0.8)';
+          }),
+          borderColor: facts.map(function(f, i) {
+            var r = f / plans[i];
+            return r >= 1 ? '#10b981' : r >= 0.7 ? '#f59e0b' : '#ef4444';
+          }),
+          borderWidth: 2,
+          borderRadius: 6,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', labels: { usePointStyle: true, padding: 20 } },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              return ' ' + ctx.dataset.label + ': ' + Number(ctx.raw).toLocaleString('ru-RU') + ' ₽';
+            }
+          }
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          grid: { color: '#f1f5f9' },
+          ticks: {
+            callback: function(v) { return (v/1000).toFixed(0) + 'к'; }
+          }
+        },
+        x: { grid: { display: false } }
+      }
+    }
+  });
+}
+
+google.script.run
+  .withSuccessHandler(function(json) { render(JSON.parse(json)); })
+  .withFailureHandler(function(e) {
+    document.getElementById('main').innerHTML =
+      '<div class="loading"><p style="color:#ef4444">Ошибка загрузки: ' + e.message + '</p></div>';
+  })
+  .getDashboardData();
+</script>
+</body>
+</html>
