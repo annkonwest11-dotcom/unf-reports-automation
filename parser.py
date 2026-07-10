@@ -17,7 +17,9 @@ class Report:
     calls_1_2min: str = ""
     calls_2_5min: str = ""
     calls_over_5min: str = ""
-    orders: str = ""          # "будний" | "выходной" — для шаблона Влады
+    orders: str = ""          # "да"/"нет" — шаблон Влады «Заказы (да/нет)»
+    orders_weekend: str = ""  # сопровождение: «Заказы выходные», телефонов "1"/"2"
+    orders_weekday: str = ""  # сопровождение: «Заказы будние», доп телефон "да"/"нет"
     # Old-format fields (backward compat)
     shift_type: str = ""
     side_job_type: str = ""
@@ -30,10 +32,12 @@ _NEW_FIELDS = [
     (r'звонки\s*1\s*[-–]\s*2',     'calls_1_2min'),
     (r'звонки\s*2\s*[-–]\s*5',     'calls_2_5min'),
     (r'звонки\s*>\s*5',            'calls_over_5min'),
+    (r'заказ.*выходн',             'orders_weekend'),   # сопровождение: телефонов 1/2
+    (r'заказ.*будн',               'orders_weekday'),   # сопровождение: доп телефон да/нет
     (r'телефон',                   'phones'),
     (r'фирм',                      'firms'),
     (r'тип',                       'day_type'),
-    (r'заказ',                     'orders'),
+    (r'заказ',                     'orders'),           # Влада: «Заказы (да/нет)»
     (r'сотрудник',                 'employee'),
     (r'дата',                      'date'),
 ]

@@ -282,6 +282,44 @@ class SheetsClient:
         )
         return bool(main_row or side_row)
 
+    def _update_soprovozhdenie(self, report: Report, ws, all_rows: list, day: int, col_num: int) -> bool:
+        # Шаблон «Смена Менеджер сопровождение»:
+        #   Тип будний → осн.смена 2500; выходной → осн. нет.
+        #   Фирмы=да → +1800 в подработки (любой тип).
+        #   Заказы выходные (телефонов 1/2): тел 1 → 1800, тел 2 → 2100 (1800+300).
+        #   Заказы будние (доп телефон да/нет): да → +1800.
+        #   Подработки = сумма компонентов (0 → пусто).
+        is_weekend = bool(re.search(r'выход', report.day_type.lower()))
+        firms_yes = report.firms.strip().lower().startswith(("да", "+", "yes"))
+        ow = report.orders_weekend.strip()             # "1" | "2" | ""
+        obd_yes = report.orders_weekday.strip().lower().startswith(("да", "+", "yes"))
+
+        main_val = "" if is_weekend else "2500"
+        side = 0
+        if firms_yes:
+            side += 1800
+        if re.search(r'2', ow):
+            side += 2100
+        elif re.search(r'1', ow):
+            side += 1800
+        if obd_yes:
+            side += 1800
+
+        main_row = self._find_employee_row(
+            all_rows, report.employee, self._section_employee_rows(all_rows, "основные смены"))
+        side_row = self._find_employee_row(
+            all_rows, report.employee, self._section_employee_rows(all_rows, "подработки"))
+        if main_row:
+            ws.update_cell(main_row, col_num, main_val)
+        if side_row:
+            ws.update_cell(side_row, col_num, str(side) if side > 0 else "")
+        logger.info(
+            "Сопровождение %s день=%d: тип=%s осн=%s подраб=%s (firms=%s ow=%r будн.доп=%s)",
+            report.employee, day, "вых" if is_weekend else "будн", main_val or "—",
+            side or "—", firms_yes, ow, obd_yes,
+        )
+        return bool(main_row or side_row)
+
     def update_report(self, report: Report) -> bool:
         ws = self._shifts_ws()
         all_rows = ws.get_all_values()
@@ -304,6 +342,9 @@ class SheetsClient:
 
         if report.manager_type == "влада":
             return self._update_vlada(report, ws, all_rows, day, col_num)
+
+        if report.manager_type == "сопровождение":
+            return self._update_soprovozhdenie(report, ws, all_rows, day, col_num)
 
         is_side = self._is_side_job(report)
         section_key = "подработки" if is_side else "основные смены"
