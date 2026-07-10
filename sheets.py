@@ -1,6 +1,6 @@
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -15,6 +15,9 @@ SCOPES = [
 ]
 
 HEADER_ROW = 4
+MSK = timezone(timedelta(hours=3))
+# Диапазоны данных дней в листе смен (осн. смены / подработки), колонки E:AI
+_SHIFT_DAY_RANGES = ('E5:AI13', 'E18:AI21')
 
 _MONTHS_RU = {
     'январ': 1, 'феврал': 2, 'март': 3, 'апрел': 4,
@@ -126,6 +129,37 @@ class SheetsClient:
             spreadsheet = self._gc.open_by_key(self._spreadsheet_id)
             self._ws = spreadsheet.worksheet("СМЕНЫ")
         return self._ws
+
+    def _shifts_ws(self) -> gspread.Worksheet:
+        """Лист смен для СЕГОДНЯШНЕЙ даты. Если календарный месяц уже следующий за
+        расчётным периодом (окно 1-10, старый месяц ещё не закрыт) — пишем/читаем в
+        временный лист СМЕНЫ_СЛЕД (создаём копией СМЕНЫ при необходимости), чтобы
+        смены нового месяца не столкнулись со старыми в тех же колонках дней.
+        При закрытии месяца archive_month переносит СМЕНЫ_СЛЕД → СМЕНЫ и удаляет его."""
+        sh = self._gc.open_by_key(self._spreadsheet_id)
+        period = sh.worksheet('НАСТРОЙКИ').acell('B4').value or ''
+        try:
+            pm, py = _parse_period(period)
+        except Exception:
+            return sh.worksheet('СМЕНЫ')
+        today = datetime.now(MSK)
+        if (today.year, today.month) == (py, pm):
+            return sh.worksheet('СМЕНЫ')
+        nxt_m = pm % 12 + 1
+        nxt_y = py + (1 if pm == 12 else 0)
+        if (today.year, today.month) == (nxt_y, nxt_m):
+            try:
+                return sh.worksheet('СМЕНЫ_СЛЕД')
+            except gspread.WorksheetNotFound:
+                base = sh.worksheet('СМЕНЫ')
+                nw = sh.duplicate_sheet(base.id, new_sheet_name='СМЕНЫ_СЛЕД')
+                nw.batch_clear(list(_SHIFT_DAY_RANGES))
+                nw.update([[_next_month_label(period)]], 'A2')
+                logger.info("Created СМЕНЫ_СЛЕД for overlap month (%s)", _next_month_label(period))
+                return nw
+        logger.warning("Shifts routing: today %d-%02d vs period %r — defaulting to СМЕНЫ",
+                       today.year, today.month, period)
+        return sh.worksheet('СМЕНЫ')
 
     def _section_employee_rows(self, all_rows: list[list[str]], keyword: str) -> set[int]:
         section_start = None
@@ -259,7 +293,7 @@ class SheetsClient:
             return bool(main_row)
 
     def update_report(self, report: Report) -> bool:
-        ws = self._get_sheet()
+        ws = self._shifts_ws()
         all_rows = ws.get_all_values()
         header_row = all_rows[HEADER_ROW - 1] if len(all_rows) >= HEADER_ROW else []
 
@@ -382,7 +416,7 @@ class SheetsClient:
         }
 
     def write_shift(self, employee_name: str, day: int) -> bool:
-        ws = self._get_sheet()
+        ws = self._shifts_ws()
         all_rows = ws.get_all_values()
         header_row = all_rows[HEADER_ROW - 1] if len(all_rows) >= HEADER_ROW else []
 
@@ -405,7 +439,7 @@ class SheetsClient:
 
     def get_employees_without_report(self, day: int) -> list[str]:
         """Returns names of employees in основные смены who have no entry for the given day."""
-        ws = self._get_sheet()
+        ws = self._shifts_ws()
         all_rows = ws.get_all_values()
         header_row = all_rows[HEADER_ROW - 1] if len(all_rows) >= HEADER_ROW else []
 
@@ -590,9 +624,32 @@ class SheetsClient:
 
         # Clear СМЕНЫ data (days only, formulas in col AJ stay)
         ws_smeny = sh.worksheet('СМЕНЫ')
-        ws_smeny.batch_clear(['E5:AI13', 'E18:AI21'])
+        ws_smeny.batch_clear(list(_SHIFT_DAY_RANGES))
         next_label = _next_month_label(period)
         ws_smeny.update([[next_label]], 'A2')
+
+        # Промоут смен следующего месяца: если в окне 1-10 бот писал смены нового
+        # месяца во временный лист СМЕНЫ_СЛЕД — переносим их значениями в очищенный
+        # СМЕНЫ и удаляем временный лист (следующий нахлёст создаст его заново).
+        try:
+            ws_next = sh.worksheet('СМЕНЫ_СЛЕД')
+
+            def _grid(sid, r0, r1, c0, c1):
+                return {"sheetId": sid, "startRowIndex": r0, "endRowIndex": r1,
+                        "startColumnIndex": c0, "endColumnIndex": c1}
+            # E5:AI13 → строки 5-13, E18:AI21 → строки 18-21; колонки E(4)…AI(35)
+            sh.batch_update({"requests": [
+                {"copyPaste": {"source": _grid(ws_next.id, 4, 13, 4, 35),
+                               "destination": _grid(ws_smeny.id, 4, 13, 4, 35),
+                               "pasteType": "PASTE_VALUES", "pasteOrientation": "NORMAL"}},
+                {"copyPaste": {"source": _grid(ws_next.id, 17, 21, 4, 35),
+                               "destination": _grid(ws_smeny.id, 17, 21, 4, 35),
+                               "pasteType": "PASTE_VALUES", "pasteOrientation": "NORMAL"}},
+            ]})
+            sh.del_worksheet(ws_next)
+            logger.info("Promoted СМЕНЫ_СЛЕД → СМЕНЫ (overlap shifts) and removed temp sheet")
+        except gspread.WorksheetNotFound:
+            pass
 
         # Clear ДАННЫЕ_Губарев and ДАННЫЕ_Перфильев data rows
         for sheet_name in ('ДАННЫЕ_Губарев', 'ДАННЫЕ_Перфильев'):
