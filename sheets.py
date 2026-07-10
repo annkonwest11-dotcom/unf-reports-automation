@@ -260,37 +260,27 @@ class SheetsClient:
         return stavka if stavka else "1"
 
     def _update_vlada(self, report: Report, ws, all_rows: list, day: int, col_num: int) -> bool:
+        # Шаблон «Смена Влада»: поле «Заказы (да/нет)».
+        #   Заказы=да  → основная смена 3000 + подработки 2000
+        #   Заказы=нет/пусто → только основная смена 3000 (подработки очищаем)
         orders = report.orders.strip().lower()
-        if re.search(r'будн', orders):
-            # Будний: смены 3000 + подработки 2500
-            main_rows = self._section_employee_rows(all_rows, "основные смены")
-            main_row = self._find_employee_row(all_rows, report.employee, main_rows)
-            side_rows = self._section_employee_rows(all_rows, "подработки")
-            side_row = self._find_employee_row(all_rows, report.employee, side_rows)
-            if main_row:
-                ws.update_cell(main_row, col_num, "3000")
-                logger.info("Влада будний: основные row=%d val=3000", main_row)
-            if side_row:
-                ws.update_cell(side_row, col_num, "2500")
-                logger.info("Влада будний: подработки row=%d val=2500", side_row)
-            return bool(main_row or side_row)
-        elif re.search(r'выход', orders):
-            # Выходной: только подработки 2000
-            side_rows = self._section_employee_rows(all_rows, "подработки")
-            side_row = self._find_employee_row(all_rows, report.employee, side_rows)
-            if side_row:
-                ws.update_cell(side_row, col_num, "2000")
-                logger.info("Влада выходной: подработки row=%d val=2000", side_row)
-            return bool(side_row)
-        else:
-            # Нет поля Заказы (старый шаблон) — только основные смены по ставке
-            main_rows = self._section_employee_rows(all_rows, "основные смены")
-            main_row = self._find_employee_row(all_rows, report.employee, main_rows)
-            if main_row:
-                stavka = all_rows[main_row - 1][3].strip() if len(all_rows[main_row - 1]) > 3 else "3000"
-                ws.update_cell(main_row, col_num, stavka or "3000")
-                logger.info("Влада (без заказов): основные row=%d val=%s", main_row, stavka)
-            return bool(main_row)
+        has_orders = orders.startswith(("да", "+", "yes"))
+
+        main_row = self._find_employee_row(
+            all_rows, report.employee, self._section_employee_rows(all_rows, "основные смены"))
+        side_row = self._find_employee_row(
+            all_rows, report.employee, self._section_employee_rows(all_rows, "подработки"))
+
+        if main_row:
+            ws.update_cell(main_row, col_num, "3000")
+        if side_row:
+            ws.update_cell(side_row, col_num, "2000" if has_orders else "")
+        logger.info(
+            "Влада: заказы=%s → основные=3000, подработки=%s (main_row=%s side_row=%s day=%d)",
+            "да" if has_orders else "нет/пусто", "2000" if has_orders else "—",
+            main_row, side_row, day,
+        )
+        return bool(main_row or side_row)
 
     def update_report(self, report: Report) -> bool:
         ws = self._shifts_ws()
