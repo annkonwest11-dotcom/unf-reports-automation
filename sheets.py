@@ -605,6 +605,10 @@ class SheetsClient:
         last_row = max(len(ws_nk.get_all_values()), 4)
         ws_nk.batch_clear([f'A4:H{last_row}'])
 
+        # Clear БЕБИ_ЛИСТЫ manual inputs: контрагенты (A) и обороты (D/E).
+        # Формулы в B/C/F–J сохраняются — лист готов к новому месяцу.
+        sh.worksheet('БЕБИ_ЛИСТЫ').batch_clear(['A4:A23', 'D4:E23'])
+
         # Clear СВОДНАЯ_ЗП manual input cells (доп.премии, комментарии, конкурс,
         # факты РОП, найм/контент Влады, авансы). Адреса — по секторной раскладке
         # от 2026-07-10 (см. карту в памяти zarplata-palette). Формулы НЕ трогаем:
