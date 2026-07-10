@@ -344,7 +344,8 @@ async def _handle_archive_confirm(update: Update, context: ContextTypes.DEFAULT_
         period = sheets.archive_month()
         await msg.edit_text(
             f"✅ Месяц *{period}* заархивирован.\n"
-            f"Листы СВОДНАЯ\\_ЗП и СМЕНЫ сохранены с форматированием.\n"
+            f"Создан единый лист-архив со всеми данными (застывшие значения, "
+            f"крупные секции свёрнуты).\n"
             f"Рабочие листы очищены, период обновлён на следующий месяц.",
             parse_mode='Markdown',
         )

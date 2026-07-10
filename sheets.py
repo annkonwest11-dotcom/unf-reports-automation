@@ -426,6 +426,147 @@ class SheetsClient:
                 missing.append(name)
         return missing
 
+    def _build_month_archive(self, sh, period: str) -> str:
+        """Собирает единый лист АРХИВ_<МЕСЯЦ>_<ГОД>: все рабочие листы секциями,
+        застывшие значения (без формул), оформление и объединения перенесены из
+        живых листов, крупные секции и детали сотрудников свёрнуты группировкой.
+        Автономная версия — scripts/build_archive.py. Возвращает имя листа."""
+        mon, yr = period.split()
+        title = f"АРХИВ_{mon.upper()}_{yr}"
+        SEC = [
+            ("НАСТРОЙКИ",        "⚙️  НАСТРОЙКИ — параметры месяца",               "A1:C40",   False),
+            ("СВОДНАЯ_ЗП",       "\U0001f4b0  СВОДНАЯ ЗП — ведомость (свёрнута до ИТОГО)", "A24:F166", "svod"),
+            ("СМЕНЫ",            "\U0001f4c5  СМЕНЫ — табель за месяц",                    None,       True),
+            ("ДАННЫЕ_Губарев",   "\U0001f4c7  ДАННЫЕ · Губарев — взаиморасчёты 1С",        None,       True),
+            ("ДАННЫЕ_Перфильев", "\U0001f4c7  ДАННЫЕ · Перфильев — взаиморасчёты 1С",      None,       True),
+            ("БЕБИ_ЛИСТЫ",       "\U0001f37c  БЕБИ-ЛИСТЫ — клиенты с вычетом 40%",          None,       True),
+            ("НОВЫЕ_КЛИЕНТЫ",    "✨  НОВЫЕ КЛИЕНТЫ — поиск за месяц",                 None,       True),
+            ("КОНКУРС",          "\U0001f3c6  КОНКУРС — бонусы за результат",              None,       True),
+        ]
+
+        def _col(s):
+            n = 0
+            for ch in s:
+                n = n * 26 + (ord(ch) - 64)
+            return n - 1
+
+        def parse_a1(a1):
+            m = re.match(r"([A-Z]+)(\d+):([A-Z]+)(\d+)", a1)
+            return int(m.group(2)) - 1, _col(m.group(1)), int(m.group(4)), _col(m.group(3)) + 1
+
+        parts = []
+        for name, hdr, rng, grp in SEC:
+            ws = sh.worksheet(name)
+            if rng:
+                r0, c0, r1, c1 = parse_a1(rng)
+                vals = ws.get(rng, value_render_option='FORMATTED_VALUE')
+            else:
+                vals = ws.get_all_values()
+                while vals and not any(str(x).strip() for x in vals[-1]):
+                    vals.pop()
+                r0, c0, r1, c1 = 0, 0, len(vals), max((len(r) for r in vals), default=1)
+            src = {"sheetId": ws.id, "startRowIndex": r0, "endRowIndex": r1,
+                   "startColumnIndex": c0, "endColumnIndex": c1}
+            parts.append((hdr, vals, src, grp))
+
+        maxc = max(p[2]["endColumnIndex"] - p[2]["startColumnIndex"] for p in parts)
+        maxc = max(maxc, 6)
+
+        def pad(r):
+            return list(r) + [""] * (maxc - len(r))
+
+        matrix = [pad([f"АРХИВ · {period}"]),
+                  pad(["❄ Застывшие значения (без формул). Крупные секции свёрнуты — разворот по [+] слева."]),
+                  pad([])]
+        layout = []
+        svod_labels = None
+        svod_dstart = None
+        for hdr, vals, src, grp in parts:
+            hrow = len(matrix)
+            matrix.append(pad([hdr]))
+            dstart = len(matrix)
+            nc = src["endColumnIndex"] - src["startColumnIndex"]
+            for r in vals:
+                matrix.append(pad(r))
+            layout.append((hdr, hrow, dstart, len(vals), nc, src, grp))
+            if grp == "svod":
+                svod_labels = [(r[0] if r else "") for r in vals]
+                svod_dstart = dstart
+            matrix.append(pad([]))
+        total_rows = len(matrix) + 5
+
+        if title in {w.title for w in sh.worksheets()}:
+            sh.del_worksheet(sh.worksheet(title))
+        aws = sh.add_worksheet(title=title, rows=total_rows, cols=maxc, index=0)
+        aid = aws.id
+        aws.update(matrix, "A1", value_input_option="RAW")
+
+        def rgb(h):
+            h = h.lstrip('#')
+            return {"red": int(h[0:2], 16) / 255, "green": int(h[2:4], 16) / 255, "blue": int(h[4:6], 16) / 255}
+
+        def gr(r0, r1, c0, c1):
+            return {"sheetId": aid, "startRowIndex": r0, "endRowIndex": r1, "startColumnIndex": c0, "endColumnIndex": c1}
+
+        reqs = []
+        for hdr, hrow, dstart, nr, nc, src, grp in layout:
+            if nr == 0:
+                continue
+            reqs.append({"copyPaste": {"source": src, "destination": gr(dstart, dstart + nr, 0, nc),
+                                       "pasteType": "PASTE_FORMAT", "pasteOrientation": "NORMAL"}})
+        mmeta = sh.fetch_sheet_metadata({"fields": "sheets(properties(sheetId),merges)"})
+        merges_by_sid = {s["properties"]["sheetId"]: s.get("merges", []) for s in mmeta["sheets"]}
+        for hdr, hrow, dstart, nr, nc, src, grp in layout:
+            if nr == 0:
+                continue
+            r0, c0, r1, c1 = src["startRowIndex"], src["startColumnIndex"], src["endRowIndex"], src["endColumnIndex"]
+            for m in merges_by_sid.get(src["sheetId"], []):
+                if m["startRowIndex"] >= r0 and m["endRowIndex"] <= r1 and m["startColumnIndex"] >= c0 and m["endColumnIndex"] <= c1:
+                    reqs.append({"mergeCells": {"range": {"sheetId": aid,
+                        "startRowIndex": dstart + (m["startRowIndex"] - r0), "endRowIndex": dstart + (m["endRowIndex"] - r0),
+                        "startColumnIndex": m["startColumnIndex"] - c0, "endColumnIndex": m["endColumnIndex"] - c0},
+                        "mergeType": "MERGE_ALL"}})
+        reqs.append({"repeatCell": {"range": gr(0, 1, 0, maxc), "cell": {"userEnteredFormat": {"backgroundColor": rgb("#ffffff"), "textFormat": {"bold": True, "fontSize": 15, "foregroundColor": rgb("#37503f")}}}, "fields": "userEnteredFormat(backgroundColor,textFormat)"}})
+        reqs.append({"repeatCell": {"range": gr(1, 2, 0, maxc), "cell": {"userEnteredFormat": {"backgroundColor": rgb("#ffffff"), "textFormat": {"italic": True, "foregroundColor": rgb("#6b7a75")}}}, "fields": "userEnteredFormat(backgroundColor,textFormat)"}})
+        for hdr, hrow, dstart, nr, nc, src, grp in layout:
+            reqs.append({"repeatCell": {"range": gr(hrow, hrow + 1, 0, maxc), "cell": {"userEnteredFormat": {"backgroundColor": rgb("#7f9990"), "textFormat": {"bold": True, "foregroundColor": rgb("#ffffff"), "fontSize": 11}}}, "fields": "userEnteredFormat(backgroundColor,textFormat)"}})
+        reqs.append({"updateSheetProperties": {"properties": {"sheetId": aid, "gridProperties": {"frozenRowCount": 1}}, "fields": "gridProperties.frozenRowCount"}})
+        for hdr, hrow, dstart, nr, nc, src, grp in layout:
+            if "НАСТРОЙКИ" in hdr and nr > 0:
+                reqs.append({"mergeCells": {"range": gr(dstart, dstart + 1, 0, 3), "mergeType": "MERGE_ALL"}})
+        widths = {0: 240, 1: 230, 2: 165, 3: 200, 4: 150, 5: 305}
+        for c, w in widths.items():
+            reqs.append({"updateDimensionProperties": {"range": {"sheetId": aid, "dimension": "COLUMNS", "startIndex": c, "endIndex": c + 1}, "properties": {"pixelSize": w}, "fields": "pixelSize"}})
+        if maxc > 6:
+            reqs.append({"updateDimensionProperties": {"range": {"sheetId": aid, "dimension": "COLUMNS", "startIndex": 6, "endIndex": maxc}, "properties": {"pixelSize": 85}, "fields": "pixelSize"}})
+
+        groups = []
+        labels = [str(x).strip() for x in (svod_labels or [])]
+        for idx, a in enumerate(labels):
+            if a.startswith("ИТОГО ЗП"):
+                nm = a.replace("ИТОГО ЗП —", "").replace("ИТОГО ЗП -", "").strip()
+                h = None
+                for j in range(idx - 1, -1, -1):
+                    if labels[j].startswith(nm):
+                        h = j
+                        break
+                    if labels[j].startswith("ИТОГО ЗП"):
+                        break
+                if h is not None and idx - 1 > h:
+                    groups.append((svod_dstart + h, svod_dstart + idx))
+        for hdr, hrow, dstart, nr, nc, src, grp in layout:
+            if grp is True and nr > 0:
+                groups.append((dstart, dstart + nr))
+        for s0, e0 in groups:
+            reqs.append({"addDimensionGroup": {"range": {"sheetId": aid, "dimension": "ROWS", "startIndex": s0, "endIndex": e0}}})
+
+        sh.batch_update({"requests": reqs})
+        collapse = [{"updateDimensionGroup": {"dimensionGroup": {"range": {"sheetId": aid, "dimension": "ROWS", "startIndex": s0, "endIndex": e0}, "depth": 1, "collapsed": True}, "fields": "collapsed"}} for s0, e0 in groups]
+        if collapse:
+            sh.batch_update({"requests": collapse})
+        logger.info("Built consolidated archive %s (%d sections, %d groups)", title, len(layout), len(groups))
+        return title
+
     def archive_month(self) -> str:
         """
         Archives current month by duplicating СВОДНАЯ_ЗП and СМЕНЫ within the same spreadsheet.
@@ -441,17 +582,11 @@ class SheetsClient:
         month, year = _parse_period(period)
         suffix = f"{_MONTHS_SHORT_UPPER[month]}_{year}"
 
-        sheets_to_archive = ['СВОДНАЯ_ЗП', 'СМЕНЫ']
-
-        existing_titles = {ws.title for ws in sh.worksheets()}
-        for sheet_name in sheets_to_archive:
-            archive_name = f"{sheet_name}_{suffix}"
-            if archive_name in existing_titles:
-                logger.warning("Archive sheet %r already exists, deleting old", archive_name)
-                sh.del_worksheet(sh.worksheet(archive_name))
-            ws = sh.worksheet(sheet_name)
-            sh.duplicate_sheet(ws.id, new_sheet_name=archive_name)
-            logger.info("Archived %s → %s", sheet_name, archive_name)
+        # Единый лист-архив: все рабочие листы секциями, застывшие значения,
+        # оформление и объединения перенесены, крупные секции свёрнуты группировкой
+        # (та же логика, что в scripts/build_archive.py).
+        archive_title = self._build_month_archive(sh, period)
+        logger.info("Consolidated archive built: %s", archive_title)
 
         # Clear СМЕНЫ data (days only, formulas in col AJ stay)
         ws_smeny = sh.worksheet('СМЕНЫ')
@@ -470,13 +605,25 @@ class SheetsClient:
         last_row = max(len(ws_nk.get_all_values()), 4)
         ws_nk.batch_clear([f'A4:H{last_row}'])
 
-        # Clear СВОДНАЯ_ЗП manual input cells (доп. премии, комментарии, авансы)
+        # Clear СВОДНАЯ_ЗП manual input cells (доп.премии, комментарии, конкурс,
+        # факты РОП, найм/контент Влады, авансы). Адреса — по секторной раскладке
+        # от 2026-07-10 (см. карту в памяти zarplata-palette). Формулы НЕ трогаем:
+        # конкурс Ксении/Папояна/Лианны (C50/C63/C76 = лист КОНКУРС) и C=E у Влады/РОП.
         ws_sv = sh.worksheet('СВОДНАЯ_ЗП')
         manual_ranges = [
-            'C14:C15', 'C28:C29', 'C41:C42', 'C54:C55',
-            'C64:C65', 'C80:C81', 'C86:C87',
-            'C93:C96', 'C110:C111',
-            'C120:C130', 'G120:G130',
+            'C36:C38',            # Дарья: конкурс, доп.премия, комментарий
+            'C49', 'C51:C52',     # Ксения: бонус-сторис, доп.премия, комментарий
+            'C64:C65',            # Папоян: доп.премия, комментарий
+            'C77:C78',            # Лианна: доп.премия, комментарий
+            'C87:C88',            # Алена: доп.премия, комментарий
+            'C103:C104',          # Абрамова: доп.премия, комментарий
+            'E112', 'E117', 'E121',  # РОП: факты (новые продажи / оборот / поступления)
+            'E125:E126',          # РОП: доп.премия, комментарий
+            'E135',               # Влада: % контента
+            'E138:F141',          # Влада: найм (кол-во + ФИО)
+            'E144',               # Влада: премия за проекты
+            'E148:E149',          # Влада: доп.премия, комментарий
+            'C156:E164',          # Таблица выплат: авансы / наличные / ЗП на карту
         ]
         ws_sv.batch_clear(manual_ranges)
 
