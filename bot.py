@@ -246,6 +246,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
 
+    # Диагностика: логируем полный текст любого сообщения-смены на входе
+    if re.search(r'^\s*смена', text.lower()):
+        logger.info("Incoming shift: chat=%s(%s) user=%s\n%s",
+                    getattr(chat, 'id', None), getattr(chat, 'type', None),
+                    getattr(user, 'id', None), text[:400])
+
     # Регистрация: сотрудник вводит имя в личке
     if user and user.id in _awaiting_name and chat.type == 'private':
         await _handle_registration(update, context)
@@ -282,11 +288,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     report = parse_report(text)
     if report is None:
         first = text.strip().splitlines()[0].strip().lower()
-        if re.search(r'^смена', first) and chat.type in ('group', 'supergroup') and user and ANNA_CHAT_ID:
+        is_group = chat.type in ('group', 'supergroup')
+        is_anna_private = chat.type == 'private' and user and user.id == ANNA_USER_ID
+        if re.search(r'^смена', first) and (is_group or is_anna_private) and user and ANNA_CHAT_ID:
             employees = _load_employees()
             registered_name = employees.get(str(user.id))
             sender = registered_name or (user.full_name or str(user.id))
-            logger.warning("Failed to parse report from %s: %r", sender, text[:80])
+            logger.warning("Failed to parse report from %s (chat=%s): %r", sender, chat.type, text[:120])
             await context.bot.send_message(
                 chat_id=int(ANNA_CHAT_ID),
                 text=f"⚠️ Не могу прочитать отчёт от {sender} — проверь формат",

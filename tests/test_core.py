@@ -146,6 +146,24 @@ class TestShiftWriting(unittest.TestCase):
         self.assertEqual(got.get(9), "3000")
         self.assertEqual(got.get(16), "")
 
+    def test_vlada_autofill_employee(self):
+        # ФИО не заполнено — именной шаблон подставляет «Владислава Герасимчук»
+        got = self._run("Смена Влада\nДата: 15\nЗаказы выхи (да/нет): да")
+        self.assertEqual(got.get(9), "")
+        self.assertEqual(got.get(16), "2000")
+
+    def test_vlada_vyhi_no_colon(self):
+        # «Заказы выхи (да/нет)да» без двоеточия — значение распознаётся
+        got = self._run(self._V + "Заказы будни (да/нет): нет\nЗаказы выхи (да/нет)да")
+        self.assertEqual(got.get(9), "")
+        self.assertEqual(got.get(16), "2000")
+
+    def test_vlada_tasks_with_keyword_not_field(self):
+        # строка задачи, начинающаяся не с ключа, не ломает поля (осн.3000 остаётся)
+        got = self._run(self._V + "Выполненные задачи: разобрал заказы будни утром\nЗаказы будни (да/нет): да")
+        self.assertEqual(got.get(9), "3000")
+        self.assertEqual(got.get(16), "2000")
+
     def test_vlada_legacy_orders_yes(self):
         # обратная совместимость: старое поле «Заказы (да/нет)» = будни
         got = self._run(self._V + "Заказы (да/нет): да")

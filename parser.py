@@ -60,11 +60,27 @@ _SECTIONS = [
     (r'менеджер\s+поиск',          'поиск'),
 ]
 
+# Поля «да/нет», которые разрешено распознавать без двоеточия (значение слито с
+# подсказкой «(да/нет)»). Остальные поля требуют двоеточия — во избежание ложных
+# срабатываний на строках задач.
+_NO_COLON_ATTRS = {'orders', 'orders_weekday', 'orders_weekend', 'firms'}
+
 
 def _match_field(key: str, patterns: list) -> Optional[str]:
     key_lower = key.strip().lower()
     for pattern, attr in patterns:
         if re.search(pattern, key_lower):
+            return attr
+    return None
+
+
+def _match_field_prefix(key: str, patterns: list) -> Optional[str]:
+    """Как _match_field, но поле должно стоять В НАЧАЛЕ строки — для распознавания
+    полей без двоеточия («Заказы выхи (да/нет)да»), не ловя ключевые слова из задач."""
+    key_lower = key.strip().lower()
+    for pattern, attr in patterns:
+        m = re.search(pattern, key_lower)
+        if m and m.start() <= 2:
             return attr
     return None
 
@@ -77,7 +93,8 @@ def _match_section(line: str) -> Optional[str]:
     return None
 
 
-def _parse(text: str, field_patterns: list, check_sections: bool) -> Optional[Report]:
+def _parse(text: str, field_patterns: list, check_sections: bool,
+           default_employee: str = "") -> Optional[Report]:
     report = Report()
     current_attr: Optional[str] = None
     current_lines: list[str] = []
@@ -109,10 +126,27 @@ def _parse(text: str, field_patterns: list, check_sections: bool) -> Optional[Re
                 current_lines = [value_part.strip()] if value_part.strip() else []
                 continue
 
+        # Поле БЕЗ двоеточия («Заказы выхи (да/нет)да»): распознаём поле по началу
+        # строки (убрав подсказку «(...)»), значение — да/нет/число из хвоста.
+        # Только для да/нет-полей заказов/фирм — иначе строки задач, начинающиеся
+        # с «Дата»/«Сотрудник», ложно перезаписали бы эти поля.
+        cleaned = re.sub(r'\(.*?\)', ' ', line)
+        attr = _match_field_prefix(cleaned, field_patterns)
+        if attr in _NO_COLON_ATTRS:
+            m = re.search(r'(да|нет|yes|no|\+|\d+)\s*$', cleaned.strip(), re.IGNORECASE)
+            flush()
+            current_attr = attr
+            current_lines = [m.group(1)] if m else []
+            continue
+
         if current_attr and line:
             current_lines.append(line)
 
     flush()
+
+    # Именной шаблон (напр. «Смена Влада») — ФИО можно не заполнять.
+    if not report.employee and default_employee:
+        report.employee = default_employee
 
     if report.employee and report.date:
         return report
@@ -137,7 +171,9 @@ def parse_report(text: str) -> Optional[Report]:
         return report
 
     if re.search(r'смена\s+влада', first_line):
-        report = _parse(text, _NEW_FIELDS, check_sections=False)
+        # Именной шаблон: ФИО подставляем автоматически, если не заполнено.
+        report = _parse(text, _NEW_FIELDS, check_sections=False,
+                        default_employee='Владислава Герасимчук')
         if report:
             report.manager_type = 'влада'
         return report
