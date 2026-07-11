@@ -484,7 +484,11 @@ async def auto_sync_1c(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def check_missing_reports(context: ContextTypes.DEFAULT_TYPE):
-    today = datetime.now(MSK).day
+    now = datetime.now(MSK)
+    if now.weekday() >= 5:  # суббота(5)/воскресенье(6) — выходные, не напоминаем
+        logger.info("check_missing_reports: выходной (weekday=%d) — пропуск", now.weekday())
+        return
+    today = now.day
     missing = sheets.get_employees_without_report(today)
     missing = [name for name in missing if 'анн' not in name.lower()]
 
