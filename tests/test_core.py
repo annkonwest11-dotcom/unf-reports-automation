@@ -135,6 +135,12 @@ class TestShiftWriting(unittest.TestCase):
         self.assertEqual(got.get(8), "2500")
         self.assertEqual(got.get(15), "")
 
+    def test_soprovozhdenie_budniy_firmy(self):
+        # Фирмы дают подработку в ЛЮБОЙ день (Анна, 2026-07-11): будни → осн.2500 + фирмы 1800
+        got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: будний\nФирмы: да")
+        self.assertEqual(got.get(8), "2500")
+        self.assertEqual(got.get(15), "1800")
+
     def test_soprovozhdenie_vyhodnoy_firmy_2tel(self):
         got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: выходной\nФирмы: да\nЗаказы выходные: 2")
         self.assertEqual(got.get(8), "")
