@@ -263,11 +263,25 @@ class SheetsClient:
         return stavka if stavka else "1"
 
     def _update_vlada(self, report: Report, ws, all_rows: list, day: int, col_num: int) -> bool:
-        # Шаблон «Смена Влада»: поле «Заказы (да/нет)».
-        #   Заказы=да  → основная смена 3000 + подработки 2000
-        #   Заказы=нет/пусто → только основная смена 3000 (подработки очищаем)
-        orders = report.orders.strip().lower()
-        has_orders = orders.startswith(("да", "+", "yes"))
+        # Шаблон «Смена Влада»: поля «Заказы будни (да/нет)» и «Заказы выхи (да/нет)».
+        #   • «Заказы выхи = да» → ВЫХОДНОЙ: осн.смену НЕ ставим, подработка 2000.
+        #   • иначе → осн.смена 3000 ВСЕГДА (будни/выхи пусто или «нет» — тоже 3000).
+        #       при этом «Заказы будни = да» → +подработка 2000.
+        # Старое поле «Заказы (да/нет)» (report.orders) = будни (обратная совместимость).
+        def _yes(v: str) -> bool:
+            return v.strip().lower().startswith(("да", "+", "yes"))
+
+        vyhi_yes = _yes(report.orders_weekend)                               # «Заказы выхи»
+        budni_yes = _yes(report.orders_weekday) or _yes(report.orders)      # «Заказы будни» (+старое)
+
+        if vyhi_yes:                                        # выходной с заказами
+            main_val = ""
+            side_val = "2000"
+            day_kind = "вых"
+        else:                                              # будний (или без заказов) → осн.3000
+            main_val = "3000"
+            side_val = "2000" if budni_yes else ""
+            day_kind = "будн"
 
         main_row = self._find_employee_row(
             all_rows, report.employee, self._section_employee_rows(all_rows, "основные смены"))
@@ -275,13 +289,13 @@ class SheetsClient:
             all_rows, report.employee, self._section_employee_rows(all_rows, "подработки"))
 
         if main_row:
-            ws.update_cell(main_row, col_num, "3000")
+            ws.update_cell(main_row, col_num, main_val)
         if side_row:
-            ws.update_cell(side_row, col_num, "2000" if has_orders else "")
+            ws.update_cell(side_row, col_num, side_val)
         logger.info(
-            "Влада: заказы=%s → основные=3000, подработки=%s (main_row=%s side_row=%s day=%d)",
-            "да" if has_orders else "нет/пусто", "2000" if has_orders else "—",
-            main_row, side_row, day,
+            "Влада %s день=%d: осн=%s подраб=%s (будни=%r выхи=%r orders=%r main_row=%s side_row=%s)",
+            day_kind, day, main_val or "—", side_val or "—",
+            report.orders_weekday, report.orders_weekend, report.orders, main_row, side_row,
         )
         return bool(main_row or side_row)
 

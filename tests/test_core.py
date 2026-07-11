@@ -120,13 +120,40 @@ class TestShiftWriting(unittest.TestCase):
             got = self._run(f"Смена Менеджер поиск\nСотрудник: {who}\nДата: 15\nЗвонки всего: 20")
             self.assertEqual(got.get(row), "2500", who)
 
-    def test_vlada_orders_yes(self):
-        got = self._run("Смена Влада\nСотрудник: Владислава Герасимчук\nДата: 15\nЗаказы (да/нет): да")
-        self.assertEqual(got.get(9), "3000")   # осн.
-        self.assertEqual(got.get(16), "2000")  # подраб.
+    _V = "Смена Влада\nСотрудник: Владислава Герасимчук\nДата: 15\n"
 
-    def test_vlada_orders_no(self):
-        got = self._run("Смена Влада\nСотрудник: Владислава Герасимчук\nДата: 15\nЗаказы (да/нет): нет")
+    def test_vlada_budni_yes(self):
+        # будни=да → осн.3000 + подраб.2000
+        got = self._run(self._V + "Заказы будни (да/нет): да\nЗаказы выхи (да/нет):")
+        self.assertEqual(got.get(9), "3000")
+        self.assertEqual(got.get(16), "2000")
+
+    def test_vlada_budni_no(self):
+        # будни=нет, выхи пусто → только осн.3000
+        got = self._run(self._V + "Заказы будни (да/нет): нет\nЗаказы выхи (да/нет):")
+        self.assertEqual(got.get(9), "3000")
+        self.assertEqual(got.get(16), "")
+
+    def test_vlada_vyhi_yes(self):
+        # выхи=да → осн.не ставим, только подраб.2000
+        got = self._run(self._V + "Заказы будни (да/нет):\nЗаказы выхи (да/нет): да")
+        self.assertEqual(got.get(9), "")
+        self.assertEqual(got.get(16), "2000")
+
+    def test_vlada_both_no(self):
+        # оба нет/пусто → осн.3000 (Анна, 2026-07-11)
+        got = self._run(self._V + "Заказы будни (да/нет): нет\nЗаказы выхи (да/нет): нет")
+        self.assertEqual(got.get(9), "3000")
+        self.assertEqual(got.get(16), "")
+
+    def test_vlada_legacy_orders_yes(self):
+        # обратная совместимость: старое поле «Заказы (да/нет)» = будни
+        got = self._run(self._V + "Заказы (да/нет): да")
+        self.assertEqual(got.get(9), "3000")
+        self.assertEqual(got.get(16), "2000")
+
+    def test_vlada_legacy_orders_no(self):
+        got = self._run(self._V + "Заказы (да/нет): нет")
         self.assertEqual(got.get(9), "3000")
         self.assertEqual(got.get(16), "")
 
