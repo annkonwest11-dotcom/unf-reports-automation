@@ -59,6 +59,108 @@ class TestParser(unittest.TestCase):
         self.assertIsNone(parse_report("смена менеджер поиск\nсотрудник: Кто-то\n"))
 
 
+def _shifts_fixture():
+    """Снимок раскладки листа СМЕНЫ (после удаления Лианны/Абрамовой 2026-07-11):
+    осн. смены строки 5-10, подработки 15-17. Колонки: A=№, B=ФИО, C=отдел,
+    D=ставка, E.. = дни 1-31. Без сети — чистая логика записи смен."""
+    days = [str(d) for d in range(1, 32)]
+    empty = [""] * 31
+    return [
+        ["СМЕНЫ — Учёт рабочих дней", "", "", ""] + empty,           # 1
+        ["Июль 2026", "", "", ""] + empty,                           # 2
+        ["ОСНОВНЫЕ СМЕНЫ", "", "", ""] + empty,                      # 3
+        ["№", "Сотрудник", "Отдел", "Ставка"] + days,               # 4 (заголовок дней)
+        ["1", "Дарья Вольнова", "Отдел продаж", "2500"] + empty,     # 5
+        ["2", "Ксения Наныкина", "Отдел продаж", "2500"] + empty,    # 6
+        ["3", "Валерия Папоян", "Отдел продаж", "2500"] + empty,     # 7
+        ["4", "Алена Черкашина", "Отдел продаж", "2500"] + empty,    # 8
+        ["5", "Владислава Герасимчук", "Отдел продаж", "3000"] + empty,  # 9
+        ["6", "Анна Кононенко (РОП)", "Отдел продаж", "5000"] + empty,   # 10
+        ["", "", "", ""] + empty,                                    # 11
+        ["", "", "", ""] + empty,                                    # 12
+        ["ПОДРАБОТКИ (выходные смены, доп. ставки)", "", "", ""] + empty,  # 13
+        ["№", "", "", ""] + empty,                                   # 14
+        ["1", "Алена Черкашина", "Отдел продаж", ""] + empty,        # 15
+        ["2", "Владислава Герасимчук", "Отдел продаж", ""] + empty,  # 16
+        ["3", "Анна Кононенко (РОП)", "Отдел продаж", ""] + empty,   # 17
+    ]
+
+
+class _FakeWS:
+    def __init__(self, rows):
+        self._rows = rows
+        self.writes = []  # список (row, col, value)
+
+    def get_all_values(self):
+        return [r[:] for r in self._rows]
+
+    def update_cell(self, r, c, v):
+        self.writes.append((r, c, v))
+
+
+class TestShiftWriting(unittest.TestCase):
+    """Сквозная логика записи смен (update_report/write_shift) на раскладке
+    после удаления Лианны/Абрамовой. Ставки — из docs/ЧЕК-ЛИСТ_для_бота.md."""
+
+    def _client(self):
+        sc = SheetsClient.__new__(SheetsClient)
+        self.fake = _FakeWS(_shifts_fixture())
+        sc._shifts_ws = lambda: self.fake
+        return sc
+
+    def _run(self, text):
+        sc = self._client()
+        report = parse_report(text)
+        self.assertIsNotNone(report, f"parse вернул None: {text!r}")
+        sc.update_report(report)
+        return {w[0]: w[2] for w in self.fake.writes}  # {row: value}
+
+    def test_poisk_osn_2500(self):
+        for who, row in [("Дарья Вольнова", 5), ("Ксения Наныкина", 6), ("Валерия Папоян", 7)]:
+            got = self._run(f"Смена Менеджер поиск\nСотрудник: {who}\nДата: 15\nЗвонки всего: 20")
+            self.assertEqual(got.get(row), "2500", who)
+
+    def test_vlada_orders_yes(self):
+        got = self._run("Смена Влада\nСотрудник: Владислава Герасимчук\nДата: 15\nЗаказы (да/нет): да")
+        self.assertEqual(got.get(9), "3000")   # осн.
+        self.assertEqual(got.get(16), "2000")  # подраб.
+
+    def test_vlada_orders_no(self):
+        got = self._run("Смена Влада\nСотрудник: Владислава Герасимчук\nДата: 15\nЗаказы (да/нет): нет")
+        self.assertEqual(got.get(9), "3000")
+        self.assertEqual(got.get(16), "")
+
+    def test_soprovozhdenie_budniy(self):
+        got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: будний\nФирмы: нет")
+        self.assertEqual(got.get(8), "2500")
+        self.assertEqual(got.get(15), "")
+
+    def test_soprovozhdenie_vyhodnoy_firmy_2tel(self):
+        got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: выходной\nФирмы: да\nЗаказы выходные: 2")
+        self.assertEqual(got.get(8), "")
+        self.assertEqual(got.get(15), "3900")  # 1800 фирмы + 2100 тел2
+
+    def test_soprovozhdenie_vyhodnoy_rest_1tel(self):
+        got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: выходной\nФирмы: нет\nЗаказы выходные: 1")
+        self.assertEqual(got.get(15), "1800")
+
+    def test_soprovozhdenie_vyhodnoy_rest_2tel(self):
+        got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: выходной\nФирмы: нет\nЗаказы выходные: 2")
+        self.assertEqual(got.get(15), "2100")
+
+    def test_soprovozhdenie_budniy_dop_tel(self):
+        got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: будний\nФирмы: нет\nЗаказы будние: да")
+        self.assertEqual(got.get(8), "2500")
+        self.assertEqual(got.get(15), "1800")
+
+    def test_rop_auto_shift(self):
+        sc = self._client()
+        ok = sc.write_shift("Анна Кононенко (РОП)", 15)
+        self.assertTrue(ok)
+        got = {w[0]: w[2] for w in self.fake.writes}
+        self.assertEqual(got.get(10), "5000")
+
+
 class TestPeriodHelpers(unittest.TestCase):
     def test_strip_month(self):
         rest, num = _strip_month("Май 2026")

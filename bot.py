@@ -449,7 +449,7 @@ async def auto_anna_shift(context: ContextTypes.DEFAULT_TYPE):
     if now.weekday() >= 5:
         return
     day = now.day
-    ok = sheets.write_shift('Анна Кономенко (РОП)', day)
+    ok = sheets.write_shift('Анна Кононенко (РОП)', day)
     logger.info("Anna auto-shift day=%d ok=%s", day, ok)
 
 
