@@ -50,7 +50,29 @@ def _save_last_offset(update_id: int) -> None:
     except Exception:
         logger.warning("Failed to save update offset %d", update_id)
 
-_awaiting_name: set[int] = set()
+AWAITING_NAME_FILE = os.path.join(os.path.dirname(__file__), "awaiting_name.json")
+
+
+def _load_awaiting_names() -> set[int]:
+    """Пользователи, от которых ждём имя для регистрации. Храним на диске,
+    чтобы состояние переживало рестарт бота (иначе незавершённая регистрация
+    теряется и человек не попадает в реестр)."""
+    try:
+        with open(AWAITING_NAME_FILE, encoding='utf-8') as f:
+            return set(json.load(f))
+    except (FileNotFoundError, json.JSONDecodeError, TypeError):
+        return set()
+
+
+def _save_awaiting_names() -> None:
+    try:
+        with open(AWAITING_NAME_FILE, 'w', encoding='utf-8') as f:
+            json.dump(sorted(_awaiting_name), f)
+    except Exception:
+        logger.warning("Failed to persist awaiting_name set")
+
+
+_awaiting_name: set[int] = _load_awaiting_names()
 _awaiting_archive_confirm: set[int] = set()
 
 
@@ -185,6 +207,7 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     _awaiting_name.add(user.id)
+    _save_awaiting_names()
     await update.message.reply_text("Привет! Напиши своё имя и фамилию (как в таблице смен).")
 
 
@@ -200,6 +223,7 @@ async def _handle_registration(update: Update, context: ContextTypes.DEFAULT_TYP
     employees[str(user.id)] = name
     _save_employees(employees)
     _awaiting_name.discard(user.id)
+    _save_awaiting_names()
 
     await update.message.reply_text(f"Готово! Ты зарегистрирован как {name}.")
     logger.info("Registered user %d as %r", user.id, name)
