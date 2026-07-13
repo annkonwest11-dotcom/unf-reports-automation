@@ -13,10 +13,11 @@ from google.oauth2.service_account import Credentials
 # ── Конфиг ──────────────────────────────────────────────────────────────────
 MAIN_SS_ID = '1KaxfaSWTDR31eAJfmpahaNwaO2Qohrh5xua1Rrjf2Zo'
 KPI_SS_ID  = '1QuvmjSPJUbqGTbGKKBcDu8QdQaFv1Gg2VbzUb-bEbL4'
-CREDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'credentials.json')
+_ROOT      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # корень репо
+CREDS_FILE = os.path.join(_ROOT, 'credentials.json')
 SCOPES     = ['https://www.googleapis.com/auth/spreadsheets']
 
-LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sync_novye.log')
+LOG_FILE = os.path.join(_ROOT, 'sync_novye.log')
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.INFO,
@@ -77,7 +78,14 @@ def sync():
         logging.error('Нет маппинга для месяца: %s', month)
         sys.exit(1)
 
-    kpi_sheet = kpi_ss.worksheet(kpi_sheet_name)
+    # Матчим лист KPI без учёта хвостовых пробелов в имени («июнь-июль » и т.п.)
+    kpi_sheet = next(
+        (w for w in kpi_ss.worksheets() if w.title.strip() == kpi_sheet_name.strip()),
+        None,
+    )
+    if kpi_sheet is None:
+        logging.error('Лист KPI не найден: %s', kpi_sheet_name)
+        sys.exit(1)
     data = kpi_sheet.get_all_values()
     if not data:
         logging.error('Лист %s пустой', kpi_sheet_name)
