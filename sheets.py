@@ -700,11 +700,14 @@ class SheetsClient:
         except gspread.WorksheetNotFound:
             pass
 
-        # Clear ДАННЫЕ_Губарев and ДАННЫЕ_Перфильев data rows
+        # Clear ДАННЫЕ_Губарев and ДАННЫЕ_Перфильев — ТОЛЬКО данные A:E
+        # (контрагент, долг/оборот/оплаты/долг). Колонки F:L — ПОСТОЯННЫЕ формулы
+        # (ВПР менеджеров/типа/беби из СПРАВОЧНИК, скорр.оплаты, оборот-число):
+        # их НЕ трогаем, иначе после закрытия месяца ответственные не проставляются.
         for sheet_name in ('ДАННЫЕ_Губарев', 'ДАННЫЕ_Перфильев'):
             ws_d = sh.worksheet(sheet_name)
             last_row = max(len(ws_d.get_all_values()), 4)
-            ws_d.batch_clear([f'A4:K{last_row}'])
+            ws_d.batch_clear([f'A4:E{last_row}'])
 
         # Clear НОВЫЕ_КЛИЕНТЫ data rows
         ws_nk = sh.worksheet('НОВЫЕ_КЛИЕНТЫ')
