@@ -234,6 +234,77 @@ def plan_updates(sheet_col_a, odata_balances, aliases=None, skip=None):
 
 # ─── Запись в Google Sheets ───────────────────────────────────────────────────
 
+# РОП-оборот: сумма регистра «Продажи» (СуммаTurnover) за текущий месяц по обеим
+# базам пишется в жёлтую ячейку оборота блока РОП СВОДНОЙ (Блок 3 «Факт — оборот»).
+SUMMARY_SHEET = "СВОДНАЯ_ЗП"
+OBOROT_CELL = "E88"          # Блок 3 РОП «Факт — оборот» (после удаления Ии 23.07)
+# %плана РОП (вычисленные) для мини-отчёта: новые продажи / оборот / поступления
+ROP_PCT_CELLS = ("C84", "C89", "C93")
+
+
+def fetch_oborot(base_id, today=None):
+    """Оборот (выручка) базы за текущий месяц = сумма СуммаTurnover регистра
+    AccumulationRegister_Продажи. Сходится с отчётом «Продажи» 1С."""
+    start, end = _current_month_period(today)
+    entity = (
+        "AccumulationRegister_Продажи/Turnovers("
+        f"StartPeriod={start},EndPeriod={end})"
+    )
+    rows = _fetch_odata(base_id, entity)
+    total = sum(float(r.get("СуммаTurnover", 0) or 0) for r in rows)
+    logger.info("База %s: оборот (Продажи) = %.2f", base_id, total)
+    return round(total, 2)
+
+
+def sync_oborot(dry_run=False, today=None):
+    """Суммарный оборот обеих баз → СВОДНАЯ_ЗП!E98 (Блок 3 РОП). Возвращает сумму."""
+    total = round(sum(fetch_oborot(cfg["id"], today) for cfg in BASES.values()), 2)
+    logger.info("РОП оборот (Перф+Губ) = %.2f", total)
+    if not dry_run:
+        ss = _open_spreadsheet()
+        ss.worksheet(SUMMARY_SHEET).update(
+            [[total]], OBOROT_CELL, value_input_option="RAW"
+        )
+        logger.info("Записан оборот в %s!%s", SUMMARY_SHEET, OBOROT_CELL)
+    return total
+
+
+def oborot_report(today=None):
+    """Ежедневный отчёт РОП: пишет оборот (E88, из 1С Продажи) и поступления
+    (E92, из ADesk), возвращает суммы, %плана (новые/оборот/поступления) и ссылку.
+    Поступления недоступны (нет токена / ошибка ADesk) — не срывают оборот."""
+    total = round(sum(fetch_oborot(cfg["id"], today) for cfg in BASES.values()), 2)
+    postup = None
+    try:
+        from sync_adesk import fetch_postupleniya, POSTUP_CELL
+        postup = fetch_postupleniya(today)
+    except Exception:
+        logger.exception("ADesk поступления недоступны — пишу только оборот")
+
+    ss = _open_spreadsheet()
+    sv = ss.worksheet(SUMMARY_SHEET)
+    updates = [{"range": OBOROT_CELL, "values": [[total]]}]
+    if postup is not None:
+        updates.append({"range": POSTUP_CELL, "values": [[postup]]})
+    sv.batch_update(updates, value_input_option="RAW")
+    got = sv.batch_get(list(ROP_PCT_CELLS))
+
+    def cell(res):
+        try:
+            return res[0][0]
+        except Exception:
+            return "—"
+
+    return {
+        "oborot": total,
+        "postup": postup,
+        "pct_new": cell(got[0]),
+        "pct_oborot": cell(got[1]),
+        "pct_postup": cell(got[2]),
+        "url": f"https://docs.google.com/spreadsheets/d/{ss.id}/edit#gid={sv.id}",
+    }
+
+
 def _open_spreadsheet(gc=None):
     if gc is None:
         creds = Credentials.from_service_account_file(CREDENTIALS_PATH, scopes=SCOPES)

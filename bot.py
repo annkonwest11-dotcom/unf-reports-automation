@@ -11,7 +11,8 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 from parser import parse_report
 from sheets import SheetsClient
-from sync_odata import sync_all_bases
+from sync_odata import sync_all_bases, sync_oborot, oborot_report
+from sync_novye import sync_novye
 
 load_dotenv()
 
@@ -208,7 +209,10 @@ async def handle_sync_1c(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         import asyncio
         loop = asyncio.get_event_loop()
         summary = await loop.run_in_executor(None, sync_all_bases)
-        await update.message.reply_text(_format_sync_summary(summary))
+        oborot = await loop.run_in_executor(None, sync_oborot)
+        text = _format_sync_summary(summary)
+        text += f"\n\n💰 Оборот (Продажи): {oborot:,.0f} ₽".replace(",", " ")
+        await update.message.reply_text(text)
     except Exception as e:
         logger.exception("Failed to sync 1C data")
         await update.message.reply_text(f"❌ Ошибка синхронизации: {str(e)}")
@@ -538,6 +542,78 @@ async def auto_sync_1c(context: ContextTypes.DEFAULT_TYPE):
             )
 
 
+async def auto_oborot(context: ContextTypes.DEFAULT_TYPE):
+    """Ежедневно в 10:30 МСК: обновить оборот из 1С (Продажи) и прислать Анне
+    мини-отчёт РОП — оборот, %плана и ссылку на таблицу."""
+    logger.info("Starting daily oborot update")
+    try:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        rep = await loop.run_in_executor(None, oborot_report)
+        logger.info("Oborot updated: %s", rep)
+        if ANNA_CHAT_ID:
+            oborot = f"{rep['oborot']:,.0f}".replace(",", " ")
+            postup = (f"{rep['postup']:,.0f}".replace(",", " ")
+                      if rep.get("postup") is not None else "н/д")
+            text = (
+                "📊 РОП обновлён (1С + ADesk)\n"
+                f"💰 Оборот (Продажи): {oborot} ₽\n"
+                f"💳 Поступления (ADesk): {postup} ₽\n\n"
+                "📈 % выполнения плана (РОП):\n"
+                f"  • Новые продажи: {rep['pct_new']}\n"
+                f"  • Оборот: {rep['pct_oborot']}\n"
+                f"  • Поступления: {rep['pct_postup']}\n\n"
+                f"🔗 Таблица: {rep['url']}"
+            )
+            await context.bot.send_message(chat_id=int(ANNA_CHAT_ID), text=text)
+    except Exception as e:
+        logger.exception("Oborot update failed")
+        if ANNA_CHAT_ID:
+            await context.bot.send_message(
+                chat_id=int(ANNA_CHAT_ID),
+                text=f"❌ Ошибка обновления оборота: {str(e)}"
+            )
+
+
+async def auto_novye_prodazhi(context: ContextTypes.DEFAULT_TYPE):
+    """Каждый понедельник 11:00 МСК: обновить новые продажи из KPI-таблицы +
+    автозавести новых клиентов в СПРАВОЧНИК, прислать Анне отчёт с расхождениями."""
+    if datetime.now(MSK).weekday() != 0:  # только понедельник (0)
+        return
+    logger.info("Starting weekly novye-prodazhi sync")
+    try:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        rep = await loop.run_in_executor(None, sync_novye)
+        logger.info("Novye sync: rows=%d added=%d disc=%d",
+                    rep["novye_rows"], len(rep["added"]), len(rep["discrepancies"]))
+        if ANNA_CHAT_ID:
+            total = f"{rep['novye_total']:,.0f}".replace(",", " ")
+            lines = [
+                f"🗓 Новые продажи обновлены (KPI «{rep['kpi_sheet']}»)",
+                f"📋 НОВЫЕ_КЛИЕНТЫ: {rep['novye_rows']} строк, сумма {total} ₽",
+            ]
+            if rep["added"]:
+                lines.append(f"\n➕ Заведено в справочник ({len(rep['added'])}):")
+                for name, B, C in rep["added"]:
+                    lines.append(f"  • {name[:34]} → {C or B}")
+            if rep["no_data"]:
+                nd = ", ".join(n[:22] for n in rep["no_data"])
+                lines.append(f"\nℹ️ Пока нет в 1С-данных (заработают позже): {nd}")
+            if rep["discrepancies"]:
+                lines.append("\n🔔 Вернулись, ответственный расходится — напиши верного:")
+                for cl, kpi, cur in rep["discrepancies"]:
+                    lines.append(f"  • {cl}: KPI={kpi}, в СПР {cur}")
+            await context.bot.send_message(chat_id=int(ANNA_CHAT_ID), text="\n".join(lines))
+    except Exception as e:
+        logger.exception("Novye-prodazhi sync failed")
+        if ANNA_CHAT_ID:
+            await context.bot.send_message(
+                chat_id=int(ANNA_CHAT_ID),
+                text=f"❌ Ошибка синка новых продаж: {str(e)}"
+            )
+
+
 async def check_missing_reports(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(MSK)
     if now.weekday() >= 5:  # суббота(5)/воскресенье(6) — выходные, не напоминаем
@@ -601,6 +677,8 @@ def main():
     app.job_queue.run_daily(auto_anna_shift, time=dtime(11, 0, 0, tzinfo=MSK))
     app.job_queue.run_daily(check_missing_reports, time=dtime(21, 0, 0, tzinfo=MSK))
     app.job_queue.run_daily(auto_sync_1c, time=dtime(7, 0, 0, tzinfo=MSK))
+    app.job_queue.run_daily(auto_oborot, time=dtime(10, 30, 0, tzinfo=MSK))
+    app.job_queue.run_daily(auto_novye_prodazhi, time=dtime(11, 0, 0, tzinfo=MSK))
 
     logger.info("Bot is running…")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
