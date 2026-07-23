@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -10,7 +11,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 from parser import parse_report
 from sheets import SheetsClient
-from sync_42clouds_v2 import sync_all_bases
+from sync_odata import sync_all_bases
 
 load_dotenv()
 
@@ -26,7 +27,9 @@ ANNA_CHAT_ID = os.environ.get("ANNA_CHAT_ID", "")
 GROUP_CHAT_ID = os.environ.get("GROUP_CHAT_ID", "")
 CREDENTIALS_PATH = os.path.join(os.path.dirname(__file__), "credentials.json")
 EMPLOYEES_FILE = os.path.join(os.path.dirname(__file__), "employees.json")
-CALLS_NORM = 20
+CALLS_NORM = 25
+SHEETS_WRITE_ATTEMPTS = 3      # попыток записи смены при сетевом сбое
+SHEETS_RETRY_DELAY_SEC = 3     # базовая пауза между попытками (растёт линейно)
 
 sheets = SheetsClient(CREDENTIALS_PATH, SPREADSHEET_ID)
 
@@ -173,6 +176,26 @@ def _format_report(data: dict, include_amounts: bool) -> str:
 
 # ─── handlers ─────────────────────────────────────────────────────────────────
 
+def _format_sync_summary(summary) -> str:
+    """Человекочитаемая сводка результата OData-синка для сообщения Анне."""
+    if not isinstance(summary, dict):
+        return "✅ Синхронизация из 1С завершена"
+    titles = {"perfilev": "Перфильев", "gubarev": "Губарев"}
+    lines = ["✅ Синхронизация из 1С завершена"]
+    new_all = []
+    for base, s in summary.items():
+        lines.append(
+            f"• {titles.get(base, base)}: обновлено {s.get('updates', 0)} строк"
+        )
+        for name in s.get("new_names", []):
+            new_all.append(name)
+    if new_all:
+        lines.append("")
+        lines.append(f"⚠️ Нет в листе ({len(new_all)}) — назначь менеджера/сверь:")
+        lines.extend(f"  – {n}" for n in new_all)
+    return "\n".join(lines)
+
+
 async def handle_sync_1c(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Синхронизировать данные из 1С в Google Sheets"""
     if not _is_from_anna(update):
@@ -184,8 +207,8 @@ async def handle_sync_1c(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         import asyncio
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, sync_all_bases)
-        await update.message.reply_text("✅ Синхронизация завершена успешно")
+        summary = await loop.run_in_executor(None, sync_all_bases)
+        await update.message.reply_text(_format_sync_summary(summary))
     except Exception as e:
         logger.exception("Failed to sync 1C data")
         await update.message.reply_text(f"❌ Ошибка синхронизации: {str(e)}")
@@ -322,17 +345,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             return
 
-    try:
-        ok = sheets.update_report(report)
-        if ok:
-            logger.info("Report saved | chat=%s employee=%s", chat.id, report.employee)
-            await _check_calls_norm(report, context)
-            await _check_early_report(report, context)
-            await _check_wrong_date(report, context)
-        else:
-            logger.warning("Report not matched | chat=%s employee=%s date=%s", chat.id, report.employee, report.date)
-    except Exception:
-        logger.exception("Failed to update Google Sheets")
+    # Запись в Google Sheets с повтором: сетевые обрывы (RemoteDisconnected,
+    # ConnectionError и т.п.) не должны терять смену. update_report идемпотентна
+    # (перечитывает лист и пишет одну ячейку), поэтому повтор безопасен.
+    ok = None
+    last_exc = None
+    for attempt in range(1, SHEETS_WRITE_ATTEMPTS + 1):
+        try:
+            ok = sheets.update_report(report)
+            last_exc = None
+            break
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "Sheets write failed (attempt %d/%d) for %s: %s",
+                attempt, SHEETS_WRITE_ATTEMPTS, report.employee, exc,
+            )
+            if attempt < SHEETS_WRITE_ATTEMPTS:
+                await asyncio.sleep(SHEETS_RETRY_DELAY_SEC * attempt)
+
+    if last_exc is not None:
+        logger.exception("Failed to update Google Sheets", exc_info=last_exc)
+        # Сообщаем отправителю, чтобы он прислал смену повторно, и дублируем Анне.
+        try:
+            await update.effective_message.reply_text(
+                "⚠️ Не удалось сохранить смену (сбой связи с таблицей). "
+                "Пришлите отчёт ещё раз через пару минут."
+            )
+        except Exception:
+            logger.exception("Failed to notify sender about save error")
+        if ANNA_CHAT_ID:
+            await context.bot.send_message(
+                chat_id=int(ANNA_CHAT_ID),
+                text=f"❌ Смена {report.employee} ({report.date}) НЕ сохранилась (сбой связи). Попросите прислать заново.",
+            )
+        return
+
+    if ok:
+        logger.info("Report saved | chat=%s employee=%s", chat.id, report.employee)
+        await _check_calls_norm(report, context)
+        await _check_early_report(report, context)
+        await _check_wrong_date(report, context)
+    else:
+        logger.warning("Report not matched | chat=%s employee=%s date=%s", chat.id, report.employee, report.date)
 
 
 async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
@@ -467,12 +522,12 @@ async def auto_sync_1c(context: ContextTypes.DEFAULT_TYPE):
     try:
         import asyncio
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, sync_all_bases)
-        logger.info("Auto sync completed successfully")
+        summary = await loop.run_in_executor(None, sync_all_bases)
+        logger.info("Auto sync completed successfully: %s", summary)
         if ANNA_CHAT_ID:
             await context.bot.send_message(
                 chat_id=int(ANNA_CHAT_ID),
-                text="✅ Автосинхронизация из 1С завершена"
+                text="🌅 Авто-синк 1С\n" + _format_sync_summary(summary)
             )
     except Exception as e:
         logger.exception("Auto sync failed")
