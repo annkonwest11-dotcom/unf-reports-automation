@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 *)",
+      "Bash(venv/bin/python bot.py)",
+      "Bash(kill %1)",
+      "Bash(venv/bin/python *)",
+      "Bash(open *)",
+      "Bash(pkill -f \"python bot.py\")",
+      "Bash(pkill -9 -f \"bot.py\")",
+      "Bash(expect -c ' *)",
+      "Bash(pkill -f \"bot.py\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(scp *)",
+      "Bash(expect *)",
+      "WebSearch",
+      "Bash(pip install *)",
+      "Bash(pkill -f \"python3 bot.py\")",
+      "Bash(chmod +x /Users/anna/claude-test/run_bot.sh)",
+      "Bash(nohup ./run_bot.sh)",
+      "Bash(curl -L \"https://dl.google.com/chrome/mac/stable/GGRO/googlechrome.dmg\" -o /tmp/chrome.dmg)",
+      "WebFetch(domain:cp.42clouds.com)",
+      "WebFetch(domain:42clouds.com)",
+      "Bash(clasp deployments *)",
+      "Bash(clasp deploy *)",
+      "Bash(curl -i -X POST https://script.google.com/macros/s/AKfycbz8j3C9zGMWm7ywi7ngI6MDFwgysVu8KYNPT8Jsf82HnQxGort5HlVLgfJ7LKNO30r2Xw/exec -H 'Content-Type: application/json' -d '{\"update_id\": 123, \"message\": {\"chat\": {\"id\": 796207056}, \"text\": \"/help\"}}')"
+    ]
+  }
+}
