@@ -6,13 +6,16 @@ import re
 from datetime import time as dtime, timezone, timedelta, datetime
 
 from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, TypeHandler, filters
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (Application, CommandHandler, ContextTypes,
+                          MessageHandler, TypeHandler, CallbackQueryHandler, filters)
 
 from parser import parse_report
 from sheets import SheetsClient
 from sync_odata import sync_all_bases, sync_oborot, oborot_report
 from sync_novye import sync_novye
+from sync_avansy import sync_avansy, format_report as _format_avansy, _open_summary_ws
+import cash_avans
 
 load_dotenv()
 
@@ -218,6 +221,303 @@ async def handle_sync_1c(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(f"❌ Ошибка синхронизации: {str(e)}")
 
 
+_RU_MONTHS = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль",
+              "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
+
+# Состояние интерактивного диалога наличного аванса (в личке Анны). Пусто = не идёт.
+_cash_flow = {}
+
+
+def _month_label():
+    now = datetime.now(MSK)
+    return f"{_RU_MONTHS[now.month - 1]} {now.year}"
+
+
+AVANS_STATE_FILE = os.path.join(os.path.dirname(__file__), "avans_state.json")
+
+
+def _avans_confirmed_month():
+    """Ключ месяца, за который наличный аванс уже подтверждён (или None)."""
+    try:
+        with open(AVANS_STATE_FILE, encoding="utf-8") as f:
+            return json.load(f).get("cash_confirmed_month")
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _mark_avans_confirmed():
+    key = datetime.now(MSK).strftime("%Y-%m")
+    with open(AVANS_STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump({"cash_confirmed_month": key}, f)
+
+
+def _is_avans_confirmed():
+    return _avans_confirmed_month() == datetime.now(MSK).strftime("%Y-%m")
+
+
+def _read_payout_rows():
+    """Строки таблицы выплат (A127:D133) → [(имя, ЗП, офиц, наличные), …]."""
+    grid = _open_summary_ws().get("A127:D133", value_render_option="UNFORMATTED_VALUE")
+    rows = []
+    for r in grid:
+        name = (r[0] if r else "") or ""
+        if not name:
+            continue
+        zp = r[1] if len(r) > 1 else 0
+        c = r[2] if len(r) > 2 else 0
+        d = r[3] if len(r) > 3 else 0
+        rows.append((name, zp, c, d))
+    return rows
+
+
+async def _send_avans_summary(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """Прислать итоговую сводку по авансам (табличный вид, HTML)."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    rows = await loop.run_in_executor(None, _read_payout_rows)
+    await context.bot.send_message(
+        chat_id, cash_avans.build_summary(rows, _month_label()), parse_mode="HTML")
+
+
+async def _cash_start(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """Запустить диалог наличного аванса: читает офиц.авансы (C), считает
+    предлагаемые суммы и начинает опрос по CASH_PLAN."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    grid = await loop.run_in_executor(
+        None, lambda: _open_summary_ws().get(
+            "A127:D133", value_render_option="UNFORMATTED_VALUE"))
+    official = {}
+    for i, row in enumerate(grid):
+        official[127 + i] = row[2] if len(row) > 2 else None
+
+    queue = []
+    for row, name, rule in cash_avans.CASH_PLAN:
+        default = cash_avans.compute_default(rule, official.get(row))
+        queue.append({"row": row, "name": name, "default": default,
+                      "official": float(official.get(row) or 0)})
+
+    _cash_flow.clear()
+    _cash_flow.update({"queue": queue, "idx": 0, "results": {},
+                       "await_amount": False, "chat_id": chat_id})
+    await context.bot.send_message(
+        chat_id, "💵 Официальные авансы вписаны. Теперь наличные — по каждому:")
+    await _cash_ask(context)
+
+
+async def _cash_ask(context: ContextTypes.DEFAULT_TYPE):
+    """Показать вопрос по текущему сотруднику (или завершить диалог)."""
+    fl = _cash_flow
+    if not fl or fl["idx"] >= len(fl["queue"]):
+        await _cash_finish(context)
+        return
+    it = fl["queue"][fl["idx"]]
+    name, default, off = it["name"], it["default"], it["official"]
+    if default is None:
+        fl["await_amount"] = True
+        kb = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("⏭ Без наличных", callback_data="cash:skip")]])
+        await context.bot.send_message(
+            fl["chat_id"],
+            f"💵 {name}: сколько наличными? Пришлите сумму сообщением (или «0»).",
+            reply_markup=kb)
+    else:
+        fl["await_amount"] = False
+        itg = cash_avans._fmt(off + default)
+        txt = (f"💵 {name} — наличный аванс\n"
+               f"Официальный (на карту): {cash_avans._fmt(off)} ₽\n"
+               f"Предлагаю наличными: {cash_avans._fmt(default)} ₽  → итого {itg} ₽")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"✅ {cash_avans._fmt(default)} ₽",
+                                  callback_data="cash:ok")],
+            [InlineKeyboardButton("✏️ Другая", callback_data="cash:edit"),
+             InlineKeyboardButton("⏭ Без наличных", callback_data="cash:skip")],
+        ])
+        await context.bot.send_message(fl["chat_id"], txt, reply_markup=kb)
+
+
+async def _cash_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка кнопок диалога наличного аванса."""
+    q = update.callback_query
+    await q.answer()
+    if not _cash_flow or not q.from_user or q.from_user.id != ANNA_USER_ID:
+        return
+    it = _cash_flow["queue"][_cash_flow["idx"]]
+    data = q.data
+    if data == "cash:ok":
+        _cash_flow["results"][it["row"]] = it["default"]
+        await q.edit_message_text(
+            f"✅ {it['name']}: наличными {cash_avans._fmt(it['default'])} ₽")
+        _cash_flow["idx"] += 1
+        await _cash_ask(context)
+    elif data == "cash:edit":
+        _cash_flow["await_amount"] = True
+        await q.edit_message_text(
+            f"✏️ {it['name']}: пришлите сумму наличными сообщением.")
+    elif data == "cash:skip":
+        _cash_flow["results"][it["row"]] = 0
+        await q.edit_message_text(f"⏭ {it['name']}: без наличных.")
+        _cash_flow["idx"] += 1
+        await _cash_ask(context)
+
+
+async def _cash_handle_amount(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    """Анна прислала сумму наличных текстом (после «Другая» или для Влады)."""
+    amt = cash_avans.parse_amount(text)
+    it = _cash_flow["queue"][_cash_flow["idx"]]
+    if amt is None:
+        await update.message.reply_text(
+            "Не понял сумму. Пришлите число, напр. 7000, или «0».")
+        return
+    _cash_flow["results"][it["row"]] = amt
+    _cash_flow["await_amount"] = False
+    await update.message.reply_text(
+        f"✅ {it['name']}: наличными {cash_avans._fmt(amt)} ₽")
+    _cash_flow["idx"] += 1
+    await _cash_ask(context)
+
+
+async def _cash_finish(context: ContextTypes.DEFAULT_TYPE):
+    """Записать наличные в колонку D, отметить месяц подтверждённым и прислать итог."""
+    fl = _cash_flow
+    chat_id = fl.get("chat_id", ANNA_CHAT_ID and int(ANNA_CHAT_ID))
+    results = dict(fl["results"])
+    import asyncio
+    loop = asyncio.get_event_loop()
+
+    def _write():
+        ws = _open_summary_ws()
+        updates = [{"range": f"D{row}", "values": [[amt if amt else ""]]}
+                   for row, amt in results.items()]
+        updates.append({"range": "D127", "values": [[""]]})  # Дарья — без наличных
+        if updates:
+            ws.batch_update(updates, value_input_option="USER_ENTERED")
+
+    await loop.run_in_executor(None, _write)
+    _cash_flow.clear()
+    _mark_avans_confirmed()
+    await _send_avans_summary(context, chat_id)
+
+
+async def handle_avans(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/avans — если наличные уже подтверждены за этот месяц, просто прислать итог;
+    иначе заполнить официальные авансы (C) из ADesk и запустить диалог наличных."""
+    if not _is_from_anna(update):
+        await update.message.reply_text("⛔ Эта команда только для Анны")
+        return
+    if _cash_flow:
+        await update.message.reply_text(
+            "Диалог аванса уже идёт — ответьте на текущий вопрос или /cancel_avans.")
+        return
+    # уже подтверждала в этом месяце → не переспрашиваем, просто итог
+    if _is_avans_confirmed():
+        await _send_avans_summary(context, update.effective_chat.id)
+        return
+    await update.message.reply_text("🔄 Заполняю официальные авансы из ADesk...")
+    try:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        rep = await loop.run_in_executor(None, lambda: sync_avansy("avans", apply=True))
+        await update.message.reply_text(_format_avansy(rep))
+        await _cash_start(context, update.effective_chat.id)
+    except Exception as e:
+        logger.exception("handle_avans failed")
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+
+
+async def handle_cancel_avans(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/cancel_avans — прервать незавершённый диалог наличного аванса."""
+    if not _is_from_anna(update):
+        return
+    if _cash_flow:
+        _cash_flow.clear()
+        await update.message.reply_text("Диалог аванса прерван. Наличные не записаны.")
+    else:
+        await update.message.reply_text("Активного диалога аванса нет.")
+
+
+async def handle_zarplata(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/zarplata — расчёт зарплаты (9-10). Пока заглушка: ждём шаблон от Анны."""
+    if not _is_from_anna(update):
+        await update.message.reply_text("⛔ Эта команда только для Анны")
+        return
+    await update.message.reply_text(
+        "🧾 Зарплатный цикл пока не настроен — пришлите шаблон по каждому "
+        "(как считать наличные/остаток), и я подключу его как /avans.")
+
+
+async def handle_avansy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Заполнить выплаты официальным сотрудникам из ADesk (аванс/зарплата).
+
+    /avansy         — по текущему числу (23-29 → аванс, 1-12 → зарплата)
+    /avansy avans   — принудительно аванс (колонка C)
+    /avansy zp      — принудительно зарплата (колонка E)
+    """
+    if not _is_from_anna(update):
+        await update.message.reply_text("⛔ Эта команда только для Анны")
+        return
+
+    arg = (context.args[0].lower() if context.args else "").strip()
+    if arg in ("avans", "аванс", "c"):
+        kind = "avans"
+    elif arg in ("zp", "зп", "зарплата", "e"):
+        kind = "zp"
+    else:
+        day = datetime.now(MSK).day
+        kind = "avans" if 20 <= day <= 31 else "zp"
+
+    await update.message.reply_text("🔄 Тяну выплаты из ADesk...")
+    try:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        rep = await loop.run_in_executor(None, lambda: sync_avansy(kind, apply=True))
+        await update.message.reply_text(_format_avansy(rep))
+    except Exception as e:
+        logger.exception("Failed to sync avansy")
+        await update.message.reply_text(f"❌ Ошибка заполнения выплат: {str(e)}")
+
+
+async def auto_avansy(context: ContextTypes.DEFAULT_TYPE):
+    """В дни выплат опрашивает ADesk (каждый час 10-15 МСК, см. расписание) и
+    заполняет таблицу выплат СВОДНАЯ_ЗП, как только выплата появится.
+    24-25 число → аванс (колонка C), 9-10 → зарплата (колонка E), иначе тихо выходим.
+    Пишет и уведомляет Анну ТОЛЬКО по появившимся/изменившимся суммам (не спамит
+    каждый час одинаковым); идемпотентно.
+    """
+    day = datetime.now(MSK).day
+    if day in (24, 25):
+        kind = "avans"
+    elif day in (9, 10):
+        kind = "zp"
+    else:
+        return
+    logger.info("Starting auto avansy sync (day=%d, kind=%s)", day, kind)
+    try:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        rep = await loop.run_in_executor(
+            None, lambda: sync_avansy(kind, apply=True, only_changed=True))
+        if not rep["changed"]:
+            return  # ничего нового — не пишем и не спамим Анну
+        logger.info("Avansy synced: %d new/changed applied=%s",
+                    len(rep["changed"]), rep["applied"])
+        if ANNA_CHAT_ID:
+            await context.bot.send_message(
+                chat_id=int(ANNA_CHAT_ID),
+                text=_format_avansy(rep, only_changed=True))
+            # после появления официальных авансов — запустить диалог наличных
+            # (только аванс, один раз: не при активном диалоге и не если Анна
+            # уже подтвердила наличные за этот месяц)
+            if kind == "avans" and not _cash_flow and not _is_avans_confirmed():
+                await _cash_start(context, int(ANNA_CHAT_ID))
+    except Exception as e:
+        logger.exception("Auto avansy failed")
+        if ANNA_CHAT_ID:
+            await context.bot.send_message(
+                chat_id=int(ANNA_CHAT_ID),
+                text=f"❌ Ошибка авто-заполнения выплат: {str(e)}")
+
+
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
@@ -278,6 +578,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info("Incoming shift: chat=%s(%s) user=%s\n%s",
                     getattr(chat, 'id', None), getattr(chat, 'type', None),
                     getattr(user, 'id', None), text[:400])
+
+    # Диалог наличного аванса: Анна прислала сумму текстом
+    if (_cash_flow.get("await_amount") and chat.type == 'private'
+            and user and user.id == ANNA_USER_ID):
+        await _cash_handle_amount(update, context, text)
+        return
 
     # Регистрация: сотрудник вводит имя в личке
     if user and user.id in _awaiting_name and chat.type == 'private':
@@ -543,7 +849,7 @@ async def auto_sync_1c(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def auto_oborot(context: ContextTypes.DEFAULT_TYPE):
-    """Ежедневно в 10:30 МСК: обновить оборот из 1С (Продажи) и прислать Анне
+    """Ежедневно в 10:35 МСК: обновить оборот из 1С (Продажи) и прислать Анне
     мини-отчёт РОП — оборот, %плана и ссылку на таблицу."""
     logger.info("Starting daily oborot update")
     try:
@@ -667,6 +973,11 @@ def main():
     app = Application.builder().token(BOT_TOKEN).post_init(_on_startup).build()
     app.add_handler(CommandHandler('start', handle_start))
     app.add_handler(CommandHandler('sync_1c', handle_sync_1c))
+    app.add_handler(CommandHandler('avansy', handle_avansy))
+    app.add_handler(CommandHandler('avans', handle_avans))
+    app.add_handler(CommandHandler('zarplata', handle_zarplata))
+    app.add_handler(CommandHandler('cancel_avans', handle_cancel_avans))
+    app.add_handler(CallbackQueryHandler(_cash_callback, pattern=r'^cash:'))
     app.add_handler(MessageHandler(
         (filters.TEXT & ~filters.COMMAND) | filters.PHOTO | filters.Document.ALL,
         handle_message,
@@ -676,9 +987,13 @@ def main():
 
     app.job_queue.run_daily(auto_anna_shift, time=dtime(11, 0, 0, tzinfo=MSK))
     app.job_queue.run_daily(check_missing_reports, time=dtime(21, 0, 0, tzinfo=MSK))
-    app.job_queue.run_daily(auto_sync_1c, time=dtime(7, 0, 0, tzinfo=MSK))
-    app.job_queue.run_daily(auto_oborot, time=dtime(10, 30, 0, tzinfo=MSK))
+    app.job_queue.run_daily(auto_sync_1c, time=dtime(10, 30, 0, tzinfo=MSK))
+    app.job_queue.run_daily(auto_oborot, time=dtime(10, 35, 0, tzinfo=MSK))
     app.job_queue.run_daily(auto_novye_prodazhi, time=dtime(11, 0, 0, tzinfo=MSK))
+    # Выплаты официальным: опрос ADesk каждый час 10:00-15:00 МСК; активен только
+    # в дни 24-25 (аванс) и 9-10 (ЗП) — проверка дня внутри auto_avansy.
+    for _hh in range(10, 16):
+        app.job_queue.run_daily(auto_avansy, time=dtime(_hh, 0, 0, tzinfo=MSK))
 
     logger.info("Bot is running…")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
