@@ -70,6 +70,10 @@ MANAGER_IDS = {"Анна Кононенко": 7, "Владислава Гера�
                "Дарья Вольнова": 15, "Ксения Наныкина": 20}
 FALLBACK_MANAGER = "Анна Кононенко"   # куда девать нераспределённых
 SKIP_TYPES = {"Конкурент", "Закупки"}
+# «Фирмы» (тип в справочнике) ведёт Анна отдельной задачей — приоритет над менеджером
+FIRM_TYPE = "Фирма"
+FIRM_GROUP = "ФИРМЫ"
+FIRM_ASSIGNEE = "Анна Кононенко"
 
 
 # ---------- 1С OData ----------
@@ -225,6 +229,9 @@ def distribute(rows, idx):
         rec = lookup(r["client"], idx)
         if rec and rec[2] in SKIP_TYPES:
             continue
+        if rec and rec[2] == FIRM_TYPE:      # фирмы — отдельной задачей, менеджер не важен
+            dist[FIRM_GROUP].append(r)
+            continue
         search, support = (rec[0], rec[1]) if rec else ("", "")
         dist[owner_of(search, support)].append(r)
     for lst in dist.values():
@@ -328,15 +335,19 @@ def create_tasks(dist, today):
     ).replace(hour=18, minute=0, second=0, microsecond=0).isoformat()
     created = []
     for manager, clients in sorted(dist.items(), key=lambda kv: -len(kv[1])):
-        uid = MANAGER_IDS.get(manager)
+        is_firms = manager == FIRM_GROUP
+        uid = MANAGER_IDS.get(FIRM_ASSIGNEE if is_firms else manager)
         if not uid or not clients:
             continue
+        kind = "фирмы" if is_firms else "клиентов"
         desc = (f"Связаться с клиентами и напомнить про заказ на завтра ({tomorrow}).\n\n"
-                f"В списке {len(clients)} клиентов, выпавших из обычного ритма закупок "
+                f"В списке {len(clients)} {kind}, выпавших из обычного ритма закупок "
                 f"(по данным 1С за {HIST_DAYS // 7} недель).\n"
                 f"Формат: клиент — дней без заказа — обычная периодичность — дата последнего заказа.")
+        title = ("Напомнить о заказе на завтра — ФИРМЫ" if is_firms
+                 else "Напомнить о заказе на завтра")
         task = _bitrix("tasks.task.add", {"fields": {
-            "TITLE": f"Напомнить о заказе на завтра ({today.strftime('%d.%m.%Y')})",
+            "TITLE": f"{title} ({today.strftime('%d.%m.%Y')})",
             "RESPONSIBLE_ID": uid, "DESCRIPTION": desc, "DEADLINE": deadline}})
         tid = (task or {}).get("task", {}).get("id")
         for r in clients:
