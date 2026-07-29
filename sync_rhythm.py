@@ -348,7 +348,9 @@ def create_tasks(dist, today):
                  else "Напомнить о заказе на завтра")
         task = _bitrix("tasks.task.add", {"fields": {
             "TITLE": f"{title} ({today.strftime('%d.%m.%Y')})",
-            "RESPONSIBLE_ID": uid, "DESCRIPTION": desc, "DEADLINE": deadline}})
+            "RESPONSIBLE_ID": uid, "DESCRIPTION": desc, "DEADLINE": deadline,
+            # завершённая задача уходит постановщику на приёмку, а не закрывается сама
+            "TASK_CONTROL": "Y"}})
         tid = (task or {}).get("task", {}).get("id")
         for r in clients:
             _bitrix("task.checklistitem.add", {"taskId": tid, "fields": {"TITLE": checklist_line(r)}})
