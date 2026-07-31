@@ -9,7 +9,7 @@
   4. тем, у кого срок подошёл или прошёл, ставит задачи-чек-листы менеджерам.
 
 Маршрутизация задач (правило Анны): есть менеджер сопровождения → ему, иначе
-менеджеру поиска; клиенты Алёны → Анне, клиенты Абрамовой → Владиславе. Всё,
+менеджеру поиска; клиенты Абрамовой → Владиславе. Всё,
 что не удалось распределить (неактивный сотрудник, «Прямой клиент», нет в
 справочнике) → в задачу Анны, чтобы клиент не потерялся.
 
@@ -63,11 +63,11 @@ OVERDUE_RATIO = 1.5  # во сколько раз пропущено больш�
 
 # --- маршрутизация задач ---
 # менеджер из справочника → на кого реально ставим задачу
-REROUTE = {"Алена Черкашина": "Анна Кононенко",
-           "Валерия Абрамова": "Владислава Герасимчук"}
+REROUTE = {"Валерия Абрамова": "Владислава Герасимчук"}
 # исполнители в Битриксе
 MANAGER_IDS = {"Анна Кононенко": 7, "Владислава Герасимчук": 17,
-               "Дарья Вольнова": 15, "Ксения Наныкина": 20}
+               "Дарья Вольнова": 15, "Ксения Наныкина": 20,
+               "Алена Черкашина": 11}
 FALLBACK_MANAGER = "Анна Кононенко"   # куда девать нераспределённых
 SKIP_TYPES = {"Конкурент", "Закупки"}
 # «Фирмы» (тип в справочнике) ведёт Анна отдельной задачей — приоритет над менеджером
@@ -320,6 +320,23 @@ def _bitrix(method, params):
     return data.get("result")
 
 
+CHUNK = 30   # пунктов в секции чек-листа; больше — бьём на несколько, чтобы все показывались
+
+
+def add_checklist(tid, lines):
+    if len(lines) <= CHUNK:
+        for ln in lines:
+            _bitrix("task.checklistitem.add", {"taskId": tid, "fields": {"TITLE": ln}})
+        return
+    n = (len(lines) + CHUNK - 1) // CHUNK
+    for i in range(0, len(lines), CHUNK):
+        part = lines[i:i + CHUNK]
+        sec = _bitrix("task.checklistitem.add", {"taskId": tid, "fields": {
+            "TITLE": f"Часть {i // CHUNK + 1} из {n} (позиции {i + 1}–{i + len(part)})"}})
+        for ln in part:
+            _bitrix("task.checklistitem.add", {"taskId": tid, "fields": {"TITLE": ln, "PARENT_ID": sec}})
+
+
 def checklist_line(r):
     last = datetime.date.fromisoformat(r["last"]).strftime("%d.%m")
     gap = f"{r['median_gap']:.0f}" if r["median_gap"] else "?"
@@ -352,8 +369,7 @@ def create_tasks(dist, today):
             # завершённая задача уходит постановщику на приёмку, а не закрывается сама
             "TASK_CONTROL": "Y"}})
         tid = (task or {}).get("task", {}).get("id")
-        for r in clients:
-            _bitrix("task.checklistitem.add", {"taskId": tid, "fields": {"TITLE": checklist_line(r)}})
+        add_checklist(tid, [checklist_line(r) for r in clients])
         logger.info("Задача #%s → %s (%s клиентов)", tid, manager, len(clients))
         created.append((tid, manager, len(clients)))
     return created
