@@ -708,6 +708,21 @@ class SheetsClient:
             ws_d = sh.worksheet(sheet_name)
             last_row = max(len(ws_d.get_all_values()), 4)
             ws_d.batch_clear([f'A4:E{last_row}'])
+            # Промоут накопленного нового месяца: если в окне 1-10 синк писал новый
+            # месяц во временный лист ДАННЫЕ_*_СЛЕД — переносим A:E значениями в
+            # очищенный живой лист и удаляем временный (формулы F:L живого целы).
+            try:
+                ws_next = sh.worksheet(sheet_name + '_СЛЕД')
+            except gspread.WorksheetNotFound:
+                continue
+            n_next = max(len(ws_next.get_all_values()), 4)
+            nxt = ws_next.get(f'A4:E{n_next}', value_render_option='UNFORMATTED_VALUE')
+            nxt = [r for r in nxt if any(str(x).strip() for x in r)]
+            if nxt:
+                ws_d.update(nxt, f'A4:E{4 + len(nxt) - 1}', value_input_option='RAW')
+            sh.del_worksheet(ws_next)
+            logger.info("Promoted %s_СЛЕД → %s (%d строк) and removed temp",
+                        sheet_name, sheet_name, len(nxt))
 
         # Clear НОВЫЕ_КЛИЕНТЫ data rows
         ws_nk = sh.worksheet('НОВЫЕ_КЛИЕНТЫ')

@@ -93,6 +93,68 @@ SKIP_CONTRACTORS = {
 }
 
 
+# ─── Расчётный период (НАСТРОЙКИ!B4) vs календарь ──────────────────────────────
+# Синк пишет данные того месяца, который сейчас РАССЧИТЫВАЕТСЯ (НАСТРОЙКИ!B4), а не
+# просто текущего календарного. Пока Анна не закрыла месяц (B4 = «Июль 2026», а на
+# дворе август) — живой лист остаётся июльским, а новый месяц копится в отдельном
+# листе ДАННЫЕ_*_СЛЕД (тот же приём, что и СМЕНЫ_СЛЕД). archive_month при закрытии
+# переносит _СЛЕД → живой лист.
+
+SUFFIX_NEXT = "_СЛЕД"
+
+_RU_MONTHS_NUM = {
+    "январь": 1, "февраль": 2, "март": 3, "апрель": 4, "май": 5, "июнь": 6,
+    "июль": 7, "август": 8, "сентябрь": 9, "октябрь": 10, "ноябрь": 11,
+    "декабрь": 12,
+}
+
+
+def _parse_settings_period(spreadsheet):
+    """(year, month) из НАСТРОЙКИ!B4 ('Июль 2026'); None если не распознать."""
+    try:
+        raw = (spreadsheet.worksheet("НАСТРОЙКИ").acell("B4").value or "").strip().lower()
+    except Exception:
+        logger.exception("Не удалось прочитать НАСТРОЙКИ!B4")
+        return None
+    parts = raw.split()
+    month = next((_RU_MONTHS_NUM[p] for p in parts if p in _RU_MONTHS_NUM), None)
+    year = next((int(p) for p in parts if p.isdigit() and len(p) == 4), None)
+    if not month or not year:
+        return None
+    return year, month
+
+
+def resolve_mode(spreadsheet, today=None):
+    """Как синкать, исходя из расчётного периода НАСТРОЙКИ!B4 vs календаря.
+
+      normal  — календарь == расчётный период: пишем ЖИВОЙ лист за расчётный месяц
+                (обычное поведение, как было до нахлёста);
+      overlap — календарь ушёл вперёд, месяц ещё не закрыт: ЖИВОЙ лист НЕ трогаем,
+                текущий календарный месяц копим в <лист>_СЛЕД.
+
+    Возвращает dict: mode, month_date (дата внутри целевого месяца — для запроса
+    OData через _current_month_period), suffix (""|"_СЛЕД"), period_label."""
+    today = today or datetime.now()
+    pp = _parse_settings_period(spreadsheet)
+    if not pp:
+        logger.warning("НАСТРОЙКИ!B4 не распознан — синк за текущий месяц (normal)")
+        return {"mode": "normal", "month_date": today, "suffix": "",
+                "period_label": today.strftime("%Y-%m")}
+    py, pm = pp
+    if (today.year, today.month) == (py, pm):
+        return {"mode": "normal", "month_date": today, "suffix": "",
+                "period_label": f"{py}-{pm:02d}"}
+    if (today.year, today.month) > (py, pm):
+        return {"mode": "overlap", "month_date": today, "suffix": SUFFIX_NEXT,
+                "period_label": f"{today.year}-{today.month:02d} → _СЛЕД "
+                                f"(расчётный {py}-{pm:02d} не закрыт)"}
+    # расчётный период впереди календаря — не должно случаться; безопасный дефолт
+    logger.warning("Расчётный период %r впереди календаря %s — normal fallback",
+                   pp, today.strftime("%Y-%m"))
+    return {"mode": "normal", "month_date": today, "suffix": "",
+            "period_label": today.strftime("%Y-%m")}
+
+
 # ─── OData ────────────────────────────────────────────────────────────────────
 
 def _auth_headers():
@@ -257,11 +319,20 @@ def fetch_oborot(base_id, today=None):
 
 
 def sync_oborot(dry_run=False, today=None):
-    """Суммарный оборот обеих баз → СВОДНАЯ_ЗП!E98 (Блок 3 РОП). Возвращает сумму."""
-    total = round(sum(fetch_oborot(cfg["id"], today) for cfg in BASES.values()), 2)
-    logger.info("РОП оборот (Перф+Губ) = %.2f", total)
+    """Суммарный оборот обеих баз → СВОДНАЯ_ЗП!E88 (Блок 3 РОП). Возвращает сумму.
+
+    В режиме нахлёста (месяц не закрыт) E88 НЕ трогаем — оборот расчётного месяца
+    заморожен до закрытия; возвращаем справочный оборот текущего календарного."""
+    ss = _open_spreadsheet()
+    info = resolve_mode(ss, today)
+    total = round(sum(fetch_oborot(cfg["id"], info["month_date"])
+                      for cfg in BASES.values()), 2)
+    logger.info("РОП оборот (Перф+Губ) = %.2f [режим=%s]", total, info["mode"])
+    if info["mode"] == "overlap":
+        logger.info("Период %s не закрыт — E88 не трогаю (заморозка)",
+                    info["period_label"])
+        return total
     if not dry_run:
-        ss = _open_spreadsheet()
         ss.worksheet(SUMMARY_SHEET).update(
             [[total]], OBOROT_CELL, value_input_option="RAW"
         )
@@ -273,20 +344,29 @@ def oborot_report(today=None):
     """Ежедневный отчёт РОП: пишет оборот (E88, из 1С Продажи) и поступления
     (E92, из ADesk), возвращает суммы, %плана (новые/оборот/поступления) и ссылку.
     Поступления недоступны (нет токена / ошибка ADesk) — не срывают оборот."""
-    total = round(sum(fetch_oborot(cfg["id"], today) for cfg in BASES.values()), 2)
+    ss = _open_spreadsheet()
+    info = resolve_mode(ss, today)
+    md = info["month_date"]
+    total = round(sum(fetch_oborot(cfg["id"], md) for cfg in BASES.values()), 2)
     postup = None
     try:
         from sync_adesk import fetch_postupleniya, POSTUP_CELL
-        postup = fetch_postupleniya(today)
+        postup = fetch_postupleniya(md)
     except Exception:
         logger.exception("ADesk поступления недоступны — пишу только оборот")
 
-    ss = _open_spreadsheet()
     sv = ss.worksheet(SUMMARY_SHEET)
-    updates = [{"range": OBOROT_CELL, "values": [[total]]}]
-    if postup is not None:
-        updates.append({"range": POSTUP_CELL, "values": [[postup]]})
-    sv.batch_update(updates, value_input_option="RAW")
+    frozen = info["mode"] == "overlap"
+    if frozen:
+        # месяц не закрыт — E88/E92 расчётного месяца заморожены, не перезаписываем;
+        # oborot/postup ниже — справочные суммы текущего календарного месяца
+        logger.info("РОП заморожен: период %s не закрыт (справочно оборот=%.2f)",
+                    info["period_label"], total)
+    else:
+        updates = [{"range": OBOROT_CELL, "values": [[total]]}]
+        if postup is not None:
+            updates.append({"range": POSTUP_CELL, "values": [[postup]]})
+        sv.batch_update(updates, value_input_option="RAW")
     got = sv.batch_get(list(ROP_PCT_CELLS))
 
     def cell(res):
@@ -296,6 +376,8 @@ def oborot_report(today=None):
             return "—"
 
     return {
+        "frozen": frozen,
+        "period": info["period_label"],
         "oborot": total,
         "postup": postup,
         "pct_new": cell(got[0]),
@@ -315,9 +397,27 @@ def _open_spreadsheet(gc=None):
 
 
 def sync_base(spreadsheet, sheet_name, base_id, dry_run=True, append_new=False,
-              today=None):
+              today=None, create_if_missing=False, template_sheet=None):
     balances = fetch_base_balances(base_id, today=today)
-    ws = spreadsheet.worksheet(sheet_name)
+    try:
+        ws = spreadsheet.worksheet(sheet_name)
+    except gspread.WorksheetNotFound:
+        if not create_if_missing:
+            raise
+        base_ws = spreadsheet.worksheet(template_sheet or sheet_name)
+        if dry_run:
+            # в dry-run временный лист не создаём — план матчим по шаблону (живому)
+            ws = base_ws
+            logger.info("[dry-run] лист %s отсутствует — план по шаблону %s",
+                        sheet_name, base_ws.title)
+        else:
+            ws = spreadsheet.duplicate_sheet(base_ws.id, new_sheet_name=sheet_name)
+            # новый месяц: обороты/остатки обнуляем (A — контрагенты, F:L — формулы
+            # ВПР менеджеров/типа — сохраняем из копии живого листа)
+            last = max(len(ws.col_values(1)), DATA_START_ROW)
+            ws.batch_clear([f"B{DATA_START_ROW}:E{last}"])
+            logger.info("Создан лист %s (копия %s), B:E очищены",
+                        sheet_name, base_ws.title)
     col_a = ws.col_values(1)[DATA_START_ROW - 1 :]  # от строки 4 вниз
     updates, new_clients = plan_updates(col_a, balances)
 
@@ -358,14 +458,19 @@ def sync_all_bases(dry_run=False, append_new=False, today=None):
 
     append_new=False (по умолчанию): обновляем только совпавшие по имени строки,
     несматченных контрагентов лишь возвращаем в сводке (не дописываем)."""
-    logger.info("Старт OData-синка (dry_run=%s, append_new=%s)", dry_run, append_new)
     spreadsheet = _open_spreadsheet()
-    summary = {}
+    info = resolve_mode(spreadsheet, today)
+    logger.info("Старт OData-синка: режим=%s, период=%s (dry_run=%s, append_new=%s)",
+                info["mode"], info["period_label"], dry_run, append_new)
+    summary = {"_mode": info["mode"], "_period": info["period_label"]}
     for base_name, cfg in BASES.items():
         logger.info("Обработка %s...", base_name)
+        target = cfg["sheet_name"] + info["suffix"]
         summary[base_name] = sync_base(
-            spreadsheet, cfg["sheet_name"], cfg["id"],
-            dry_run=dry_run, append_new=append_new, today=today,
+            spreadsheet, target, cfg["id"],
+            dry_run=dry_run, append_new=append_new, today=info["month_date"],
+            create_if_missing=(info["suffix"] != ""),
+            template_sheet=cfg["sheet_name"],
         )
     logger.info("OData-синк завершён: %s", summary)
     return summary
@@ -392,7 +497,10 @@ if __name__ == "__main__":
     )
     result = sync_all_bases(dry_run=not args.apply, append_new=args.append_new)
     print("\n=== ИТОГ ===")
+    print(f"режим: {result.get('_mode')}  период: {result.get('_period')}")
     for base, s in result.items():
+        if base.startswith("_"):
+            continue
         print(f"{base}: обновить {s['updates']}, не в листе {s['new']}")
         for n in s["new_names"]:
             print(f"    не в листе: {n}")

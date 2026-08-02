@@ -82,8 +82,14 @@ def _match_surname(name):
     return None
 
 
-def fetch_payouts(kind, today=None, token=None):
-    """Суммы выплат нужного типа (kind) за ТЕКУЩИЙ месяц по 4 официальным.
+def fetch_payouts(kind, today=None, token=None, ym=None):
+    """Суммы выплат нужного типа (kind) по 4 официальным за месяц ym (YYYY-MM).
+
+    ym — месяц ДАТЫ операций ADesk. Если не задан, берётся календарный месяц из
+    today/now (обратная совместимость). Осмысленный ym передаёт sync_avansy: под
+    расчётный период (аванс — сам месяц, ЗП — следующий, т.к. её платят 9-10 числа
+    следующего месяца) — чтобы выплата попадала в свою ведомость независимо от даты
+    закрытия месяца.
 
     Возвращает dict: surname → {"amount": float, "name": str, "row": int,
     "date": "DD.MM", "count": int}. Если у сотрудника несколько операций
@@ -94,7 +100,7 @@ def fetch_payouts(kind, today=None, token=None):
     token = token or os.environ.get("ADESK_TOKEN")
     if not token:
         raise RuntimeError("ADESK_TOKEN не задан в окружении")
-    ym = (today or datetime.now()).strftime("%Y-%m")
+    ym = ym or (today or datetime.now()).strftime("%Y-%m")
 
     resp = requests.get(ADESK_URL,
                         params={"api_token": token, "length": 1000000},
@@ -132,6 +138,23 @@ def fetch_payouts(kind, today=None, token=None):
         v.pop("_di", None)
     logger.info("ADesk выплаты (%s) за %s: %d сотрудников", kind, ym, len(result))
     return result
+
+
+def _ym_for_period(spreadsheet, kind, today=None):
+    """Месяц (YYYY-MM) операций ADesk, соответствующий РАСЧЁТНОМУ периоду
+    (НАСТРОЙКИ!B4): аванс («первую половину») платят в самом расчётном месяце;
+    ЗП («вторую половину») — 9-10 числа СЛЕДУЮЩЕГО месяца. Так авансы читают
+    операции того месяца, что сейчас в работе, а не календарного — выплата не
+    уедет в чужую ведомость из-за момента закрытия. Если B4 не прочитать —
+    None (fetch_payouts откатится на календарный месяц)."""
+    from sync_odata import _parse_settings_period
+    pp = _parse_settings_period(spreadsheet)
+    if not pp:
+        return None
+    py, pm = pp
+    if kind == "zp":
+        py, pm = (py + 1, 1) if pm == 12 else (py, pm + 1)
+    return f"{py:04d}-{pm:02d}"
 
 
 def _open_summary_ws():
@@ -177,12 +200,24 @@ def sync_avansy(kind, today=None, apply=True, token=None, ws=None,
       "missing": [имена без операции в этом месяце],
       "applied": bool}.
     """
-    payouts = fetch_payouts(kind, today=today, token=token)
     col = KIND_COL[kind]
 
     need_ws = apply or only_changed
     if need_ws and ws is None:
         ws = _open_summary_ws()
+
+    # Операции берём под РАСЧЁТНЫЙ период (НАСТРОЙКИ!B4), а не календарь. Читаем B4
+    # только если есть настоящий лист (у мок-ws в тестах атрибута .spreadsheet нет —
+    # тогда откат на календарный месяц, поведение как раньше).
+    ym = None
+    ss = getattr(ws, "spreadsheet", None) if ws is not None else None
+    if ss is not None:
+        try:
+            ym = _ym_for_period(ss, kind, today)
+        except Exception:
+            logger.exception("Период B4 не прочитан — беру календарный месяц")
+
+    payouts = fetch_payouts(kind, today=today, token=token, ym=ym)
     current = _read_current(ws, col) if (only_changed and ws) else {}
 
     items, changed, updates = [], [], []
