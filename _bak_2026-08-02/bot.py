@@ -186,16 +186,8 @@ def _format_sync_summary(summary) -> str:
         return "✅ Синхронизация из 1С завершена"
     titles = {"perfilev": "Перфильев", "gubarev": "Губарев"}
     lines = ["✅ Синхронизация из 1С завершена"]
-    if summary.get("_mode") == "overlap":
-        lines.append(
-            f"🔒 Месяц не закрыт ({summary.get('_period', '')}).\n"
-            "Новый месяц копится в листах ДАННЫЕ_*_СЛЕД, живой лист не тронут.\n"
-            "Закрой месяц командой закрытия — данные перенесутся автоматически."
-        )
     new_all = []
     for base, s in summary.items():
-        if base.startswith("_"):
-            continue
         lines.append(
             f"• {titles.get(base, base)}: обновлено {s.get('updates', 0)} строк"
         )
@@ -222,11 +214,7 @@ async def handle_sync_1c(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         summary = await loop.run_in_executor(None, sync_all_bases)
         oborot = await loop.run_in_executor(None, sync_oborot)
         text = _format_sync_summary(summary)
-        if summary.get("_mode") == "overlap":
-            text += (f"\n\n💰 Оборот (справочно, тек. месяц): {oborot:,.0f} ₽"
-                     .replace(",", " ") + "\n🔒 В СВОДНУЮ не записан — месяц не закрыт")
-        else:
-            text += f"\n\n💰 Оборот (Продажи): {oborot:,.0f} ₽".replace(",", " ")
+        text += f"\n\n💰 Оборот (Продажи): {oborot:,.0f} ₽".replace(",", " ")
         await update.message.reply_text(text)
     except Exception as e:
         logger.exception("Failed to sync 1C data")
@@ -873,26 +861,16 @@ async def auto_oborot(context: ContextTypes.DEFAULT_TYPE):
             oborot = f"{rep['oborot']:,.0f}".replace(",", " ")
             postup = (f"{rep['postup']:,.0f}".replace(",", " ")
                       if rep.get("postup") is not None else "н/д")
-            if rep.get("frozen"):
-                text = (
-                    f"🔒 РОП заморожен — месяц не закрыт ({rep.get('period', '')})\n"
-                    "Оборот/поступления расчётного месяца в СВОДНОЙ не тронуты.\n\n"
-                    "📎 Справочно, текущий календарный месяц:\n"
-                    f"  💰 Оборот (Продажи): {oborot} ₽\n"
-                    f"  💳 Поступления (ADesk): {postup} ₽\n\n"
-                    "Запишутся в СВОДНУЮ после закрытия месяца."
-                )
-            else:
-                text = (
-                    "📊 РОП обновлён (1С + ADesk)\n"
-                    f"💰 Оборот (Продажи): {oborot} ₽\n"
-                    f"💳 Поступления (ADesk): {postup} ₽\n\n"
-                    "📈 % выполнения плана (РОП):\n"
-                    f"  • Новые продажи: {rep['pct_new']}\n"
-                    f"  • Оборот: {rep['pct_oborot']}\n"
-                    f"  • Поступления: {rep['pct_postup']}\n\n"
-                    f"🔗 Таблица: {rep['url']}"
-                )
+            text = (
+                "📊 РОП обновлён (1С + ADesk)\n"
+                f"💰 Оборот (Продажи): {oborot} ₽\n"
+                f"💳 Поступления (ADesk): {postup} ₽\n\n"
+                "📈 % выполнения плана (РОП):\n"
+                f"  • Новые продажи: {rep['pct_new']}\n"
+                f"  • Оборот: {rep['pct_oborot']}\n"
+                f"  • Поступления: {rep['pct_postup']}\n\n"
+                f"🔗 Таблица: {rep['url']}"
+            )
             await context.bot.send_message(chat_id=int(ANNA_CHAT_ID), text=text)
     except Exception as e:
         logger.exception("Oborot update failed")
