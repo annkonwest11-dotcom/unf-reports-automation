@@ -7,6 +7,7 @@ from datetime import time as dtime, timezone, timedelta, datetime
 
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import NetworkError, RetryAfter, TimedOut
 from telegram.ext import (Application, CommandHandler, ContextTypes,
                           MessageHandler, TypeHandler, CallbackQueryHandler, filters)
 
@@ -567,24 +568,68 @@ def _zp_files():
     return zp_files
 
 
+async def _retry_send(what: str, coro_factory, attempts: int = 3):
+    """Отправить с повторами. Одна сетевая заминка не должна обрывать всю рассылку:
+    05.08 TimedOut на четвёртом сотруднике оставил Анну без половины расчётов.
+    Возможный побочный эффект — дубль сообщения, если ответ Telegram потерялся уже
+    после доставки; это лучше, чем молча пропущенный расчёт."""
+    for attempt in range(attempts):
+        try:
+            return await coro_factory()
+        except RetryAfter as exc:
+            # Telegram притормаживает при пачке сообщений подряд и сам говорит,
+            # сколько ждать — это не ошибка, просто пауза
+            await asyncio.sleep(exc.retry_after + 1)
+        except (TimedOut, NetworkError) as exc:
+            if attempt == attempts - 1:
+                logger.warning("Не удалось отправить %s: %s", what, exc)
+                return None
+            await asyncio.sleep(3 * (attempt + 1))
+        except Exception:
+            # что угодно ещё (битый файл, ошибка разметки) — пропускаем этот пункт,
+            # но рассылку по остальным людям не роняем
+            logger.exception("Ошибка при отправке %s", what)
+            return None
+    logger.warning("Не удалось отправить %s: исчерпаны попытки", what)
+    return None
+
+
 async def _send_pairs(context: ContextTypes.DEFAULT_TYPE, chat_id: int, package) -> None:
     """Расчёт сотрудника и сразу под ним его файл — чтобы не путать, чей файл чей."""
-    for _who, text, path, caption in package:
-        await context.bot.send_message(chat_id=chat_id, text=text)
+    failed = []
+    for who, text, path, caption in package:
+        sent = await _retry_send(f"расчёт {who}", lambda: context.bot.send_message(
+            chat_id=chat_id, text=text, read_timeout=60, write_timeout=60))
+        if sent is None:
+            failed.append(who)
         if path:
-            with open(path, "rb") as fh:
-                await context.bot.send_document(chat_id=chat_id, document=fh,
-                                                filename=os.path.basename(path),
-                                                caption=caption)
+            async def send_file(path=path, caption=caption):
+                # именно async с await внутри with: если вернуть корутину наружу,
+                # файл закроется до отправки («read of closed file»)
+                with open(path, "rb") as fh:
+                    return await context.bot.send_document(
+                        chat_id=chat_id, document=fh, filename=os.path.basename(path),
+                        caption=caption, read_timeout=120, write_timeout=120)
+            if await _retry_send(f"файл {who}", send_file) is None:
+                failed.append(f"{who} (файл)")
+        await asyncio.sleep(1)
+    if failed:
+        await _retry_send("список несработавших", lambda: context.bot.send_message(
+            chat_id=chat_id,
+            text="⚠️ Не удалось отправить: " + ", ".join(failed) +
+                 "\nПовторите /zp — Telegram не принял эти сообщения."))
 
 
 async def _send_totals(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     """Хвост рассылки по всем: таблица выплат и отдельно — что отдать наличными 10-го."""
     loop = asyncio.get_event_loop()
     summary = await loop.run_in_executor(None, zp_text.department_summary)
-    await context.bot.send_message(chat_id=chat_id, text=summary, parse_mode="HTML")
+    await _retry_send("сводку", lambda: context.bot.send_message(
+        chat_id=chat_id, text=summary, parse_mode="HTML",
+        read_timeout=60, write_timeout=60))
     cash = await loop.run_in_executor(None, zp_text.cash_summary)
-    await context.bot.send_message(chat_id=chat_id, text=cash)
+    await _retry_send("итог наличных", lambda: context.bot.send_message(
+        chat_id=chat_id, text=cash, read_timeout=60, write_timeout=60))
 
 
 async def _send_zp_package(context: ContextTypes.DEFAULT_TYPE, header: str) -> None:
