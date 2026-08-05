@@ -1,0 +1,17 @@
+[Unit]
+Description=Telegram-бот зарплатной системы (приём смен -> Google Sheets)
+After=network-online.target
+Wants=network-online.target
+# перезапускать не чаще, чтобы при постоянной ошибке не долбить Telegram
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/salary-bot
+ExecStart=/opt/salary-bot/venv/bin/python /opt/salary-bot/bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

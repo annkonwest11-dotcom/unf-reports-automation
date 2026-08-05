@@ -20,3 +20,6 @@ _trash/
 last_update_id.txt
 awaiting_name.json
 avans_state.json
+
+# --- Резервные копии секретов ---
+.env.bak*
