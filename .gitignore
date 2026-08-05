@@ -23,3 +23,5 @@ avans_state.json
 
 # --- Резервные копии секретов ---
 .env.bak*
+otvetstvennye_state.json
+zp_send_state.json

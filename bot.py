@@ -14,6 +14,8 @@ from parser import parse_report
 from sheets import SheetsClient
 from sync_odata import sync_all_bases, sync_oborot, oborot_report
 from sync_novye import sync_novye
+import watch_otvetstvennye
+import zp_text
 from sync_avansy import sync_avansy, format_report as _format_avansy, _open_summary_ws
 import cash_avans
 
@@ -448,14 +450,190 @@ async def handle_cancel_avans(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("Активного диалога аванса нет.")
 
 
+ZP_ORDER = list(zp_text.SHORT)          # порядок сотрудников в кнопках
+ZP_STATE_FILE = os.path.join(os.path.dirname(__file__), "zp_send_state.json")
+# куда уходит автоматическая рассылка расчётов: группа «зарплата», если её id задан
+# в .env (ZP_GROUP_CHAT_ID), иначе — Анне в личку
+ZP_GROUP_CHAT_ID = os.environ.get("ZP_GROUP_CHAT_ID", "")
+
+
+async def handle_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/chatid — сказать id текущего чата. Нужен, чтобы подключить новую группу:
+    id группы иначе не узнать (бот в polling забирает апдейты себе)."""
+    # без parse_mode: подчёркивание в «chat_id» Telegram принимает за начало курсива
+    # и падает с «Can't parse entities»
+    chat = update.effective_chat
+    await update.message.reply_text(
+        f"id этого чата: {chat.id}\nтип: {chat.type}\nназвание: {chat.title or '—'}")
+
+
+def _load_zp_state() -> dict:
+    try:
+        with open(ZP_STATE_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_zp_state(state: dict) -> None:
+    with open(ZP_STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False)
+
+
+def _zp_keyboard() -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton("📊 Сводка по отделу", callback_data="zp:dept")]]
+    pairs = [InlineKeyboardButton(zp_text.SHORT[n], callback_data=f"zp:one:{i}")
+             for i, n in enumerate(ZP_ORDER)]
+    rows += [pairs[i:i + 2] for i in range(0, len(pairs), 2)]
+    rows.append([InlineKeyboardButton("📨 Тексты всем", callback_data="zp:all"),
+                 InlineKeyboardButton("📎 Файлы 1С", callback_data="zp:files")])
+    return InlineKeyboardMarkup(rows)
+
+
 async def handle_zarplata(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/zarplata — расчёт зарплаты (9-10). Пока заглушка: ждём шаблон от Анны."""
+    """/zp и /zarplata — расчёт ЗП в любой момент: по отделу или по человеку.
+
+    С аргументом («/zp Дарья») сразу отдаёт расчёт этого сотрудника, без — меню."""
     if not _is_from_anna(update):
         await update.message.reply_text("⛔ Эта команда только для Анны")
         return
-    await update.message.reply_text(
-        "🧾 Зарплатный цикл пока не настроен — пришлите шаблон по каждому "
-        "(как считать наличные/остаток), и я подключу его как /avans.")
+    arg = " ".join(context.args).strip().lower() if context.args else ""
+    if not arg:
+        await update.message.reply_text("💰 Зарплата — что показать?",
+                                        reply_markup=_zp_keyboard())
+        return
+    who = next((n for n in ZP_ORDER
+                if arg in n.lower() or arg in zp_text.SHORT[n].lower()), None)
+    if not who:
+        await update.message.reply_text(
+            "Не нашла такого сотрудника. Попробуйте /zp без имени — там кнопки со всеми.")
+        return
+    msg = await update.message.reply_text(f"⏳ Считаю — {zp_text.SHORT[who]}…")
+    package = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _zp_files().build_package(only=who))
+    await msg.delete()
+    await _send_pairs(context, update.effective_chat.id, package)
+
+
+async def _zp_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Кнопки меню /zp."""
+    query = update.callback_query
+    await query.answer()
+    if not _is_from_anna(update):
+        return
+    parts = query.data.split(":")
+    action = parts[1]
+    loop = asyncio.get_event_loop()
+    chat_id = query.message.chat_id
+
+    if action == "dept":
+        await query.edit_message_text("⏳ Считаю…")
+        text = await loop.run_in_executor(None, zp_text.department_summary)
+        await query.edit_message_text(text, parse_mode="HTML")
+        return
+
+    if action == "one":
+        who = ZP_ORDER[int(parts[2])]
+        await query.edit_message_text(f"⏳ Считаю — {zp_text.SHORT[who]}…")
+        package = await loop.run_in_executor(
+            None, lambda: _zp_files().build_package(only=who))
+        await query.edit_message_text(f"💰 {zp_text.SHORT[who]}")
+        await _send_pairs(context, chat_id, package)
+        return
+
+    if action == "all":
+        await query.edit_message_text("⏳ Считаю расчёты и собираю файлы по всем…")
+        package = await loop.run_in_executor(None, _zp_files().build_package)
+        await query.edit_message_text("💰 Расчёты по всем — ниже, у каждого сразу его файл")
+        await _send_pairs(context, chat_id, package)
+        await _send_totals(context, chat_id)
+        return
+
+    if action == "files":
+        await query.edit_message_text("⏳ Собираю файлы взаиморасчётов из 1С…")
+        files = await loop.run_in_executor(None, _zp_files().build_files)
+        for path, caption, *_ in files:
+            with open(path, "rb") as fh:
+                await context.bot.send_document(chat_id=chat_id, document=fh,
+                                                filename=os.path.basename(path),
+                                                caption=caption)
+        await query.edit_message_text(f"✅ Файлы ({len(files)} шт.) — выше")
+
+
+def _zp_files():
+    """Ленивый импорт: zp_files требует openpyxl, и без него должен отваливаться
+    только сбор файлов, а не весь бот (05.08 бот так ушёл в цикл рестартов)."""
+    import zp_files
+    return zp_files
+
+
+async def _send_pairs(context: ContextTypes.DEFAULT_TYPE, chat_id: int, package) -> None:
+    """Расчёт сотрудника и сразу под ним его файл — чтобы не путать, чей файл чей."""
+    for _who, text, path, caption in package:
+        await context.bot.send_message(chat_id=chat_id, text=text)
+        if path:
+            with open(path, "rb") as fh:
+                await context.bot.send_document(chat_id=chat_id, document=fh,
+                                                filename=os.path.basename(path),
+                                                caption=caption)
+
+
+async def _send_totals(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    """Хвост рассылки по всем: таблица выплат и отдельно — что отдать наличными 10-го."""
+    loop = asyncio.get_event_loop()
+    summary = await loop.run_in_executor(None, zp_text.department_summary)
+    await context.bot.send_message(chat_id=chat_id, text=summary, parse_mode="HTML")
+    cash = await loop.run_in_executor(None, zp_text.cash_summary)
+    await context.bot.send_message(chat_id=chat_id, text=cash)
+
+
+async def _send_zp_package(context: ContextTypes.DEFAULT_TYPE, header: str) -> None:
+    """Полный пакет: заголовок и по каждому — расчёт + его файл.
+
+    Уходит в группу «зарплата» (ZP_GROUP_CHAT_ID) и дублем Анне в личку — её решение
+    от 05.08. Пока группа не подключена, остаётся только личка."""
+    targets = [t for t in (ZP_GROUP_CHAT_ID, ANNA_CHAT_ID) if t]
+    if not targets:
+        return
+    package = await asyncio.get_event_loop().run_in_executor(None, _zp_files().build_package)
+    for target in targets:
+        chat_id = int(target)
+        await context.bot.send_message(chat_id=chat_id, text=header)
+        await _send_pairs(context, chat_id, package)
+        await _send_totals(context, chat_id)
+
+
+async def auto_zp_monthly(context: ContextTypes.DEFAULT_TYPE):
+    """Пакет расчётов ЗП дважды за цикл: 5 числа и 10-го, когда придёт офиц. зарплата.
+
+    Висит ежечасно (см. расписание), но отправляет один раз за месяц на каждый повод —
+    отметка в zp_send_state.json. 10-го ждём, пока sync_avansy проставит колонку
+    «ЗП 9 — на карту»: до этого в текстах не было бы официальной части.
+    """
+    now = datetime.now(MSK)
+    key = now.strftime("%Y-%m")
+    state = _load_zp_state()
+    try:
+        if now.day == 5 and state.get("sent_5") != key:
+            await _send_zp_package(context, "📅 5 число — расчёт ЗП за расчётный месяц")
+            state["sent_5"] = key
+        elif now.day in (10, 11) and state.get("sent_10") != key:
+            ready = await asyncio.get_event_loop().run_in_executor(
+                None, zp_text.official_zp_ready)
+            if not ready:
+                return                      # официальную ЗП ещё не прислали — ждём
+            await _send_zp_package(
+                context, "💳 Официальная зарплата проставлена — итоговый расчёт")
+            state["sent_10"] = key
+        else:
+            return
+        _save_zp_state(state)
+        logger.info("ZP package sent (day=%d)", now.day)
+    except Exception as e:
+        logger.exception("ZP package failed")
+        if ANNA_CHAT_ID:
+            await context.bot.send_message(chat_id=int(ANNA_CHAT_ID),
+                                           text=f"❌ Ошибка рассылки расчётов ЗП: {e}")
 
 
 async def handle_avansy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -942,6 +1120,29 @@ async def auto_novye_prodazhi(context: ContextTypes.DEFAULT_TYPE):
             )
 
 
+async def auto_watch_otvetstvennye(context: ContextTypes.DEFAULT_TYPE):
+    """Ежедневно в 10:40 МСК: сверить поле «Ответственный» в карточках 1С со вчерашним
+    снимком и написать Анне, если кого-то переназначили. Если изменений нет — молчим.
+
+    Зачем: её ручные выгрузки из 1С строятся по этому полю, и смена ответственного
+    незаметно убирает деньги клиента из выгрузки (так было с Pepe Nero)."""
+    logger.info("Starting otvetstvennye watch")
+    try:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        report = await loop.run_in_executor(None, watch_otvetstvennye.check)
+        if report and ANNA_CHAT_ID:
+            await context.bot.send_message(chat_id=int(ANNA_CHAT_ID), text=report)
+        logger.info("Otvetstvennye watch done, changes=%s", bool(report))
+    except Exception as e:
+        logger.exception("Otvetstvennye watch failed")
+        if ANNA_CHAT_ID:
+            await context.bot.send_message(
+                chat_id=int(ANNA_CHAT_ID),
+                text=f"❌ Ошибка слежения за ответственными: {str(e)}"
+            )
+
+
 async def check_missing_reports(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(MSK)
     if now.weekday() >= 5:  # суббота(5)/воскресенье(6) — выходные, не напоминаем
@@ -998,8 +1199,11 @@ def main():
     app.add_handler(CommandHandler('avansy', handle_avansy))
     app.add_handler(CommandHandler('avans', handle_avans))
     app.add_handler(CommandHandler('zarplata', handle_zarplata))
+    app.add_handler(CommandHandler('zp', handle_zarplata))
+    app.add_handler(CommandHandler('chatid', handle_chatid))
     app.add_handler(CommandHandler('cancel_avans', handle_cancel_avans))
     app.add_handler(CallbackQueryHandler(_cash_callback, pattern=r'^cash:'))
+    app.add_handler(CallbackQueryHandler(_zp_callback, pattern=r'^zp:'))
     app.add_handler(MessageHandler(
         (filters.TEXT & ~filters.COMMAND) | filters.PHOTO | filters.Document.ALL,
         handle_message,
@@ -1011,11 +1215,18 @@ def main():
     app.job_queue.run_daily(check_missing_reports, time=dtime(21, 0, 0, tzinfo=MSK))
     app.job_queue.run_daily(auto_sync_1c, time=dtime(10, 30, 0, tzinfo=MSK))
     app.job_queue.run_daily(auto_oborot, time=dtime(10, 35, 0, tzinfo=MSK))
+    app.job_queue.run_daily(auto_watch_otvetstvennye, time=dtime(10, 40, 0, tzinfo=MSK))
     app.job_queue.run_daily(auto_novye_prodazhi, time=dtime(11, 0, 0, tzinfo=MSK))
     # Выплаты официальным: опрос ADesk каждый час 10:00-15:00 МСК; активен только
     # в дни 24-25 (аванс) и 9-10 (ЗП) — проверка дня внутри auto_avansy.
     for _hh in range(10, 16):
         app.job_queue.run_daily(auto_avansy, time=dtime(_hh, 0, 0, tzinfo=MSK))
+
+    # пакет расчётов ЗП: 5 числа и 10-го после появления официальной зарплаты.
+    # Ежечасно (проверка дня и отметки «уже слали» — внутри auto_zp_monthly);
+    # :20 — чтобы auto_avansy в HH:00 успел проставить колонку «ЗП 9 — на карту».
+    for _hh in range(10, 19):
+        app.job_queue.run_daily(auto_zp_monthly, time=dtime(_hh, 20, 0, tzinfo=MSK))
 
     logger.info("Bot is running…")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
