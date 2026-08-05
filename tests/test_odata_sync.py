@@ -38,6 +38,28 @@ class TestAggregate(unittest.TestCase):
                  "СуммаClosingBalance": None}]
         self.assertEqual(aggregate_balances(rows)["a"], [0, 0, 0, 0])
 
+    def test_zachet_avansa_ne_razduvaet_oboroty(self):
+        """Зачёт аванса (приход по 'Аванс' + расход по 'Долг') — перенос, не деньги.
+        Реальный случай: Евдокимов, июль 2026. Отгрузка 98 853, оплаты 103 157,
+        зачёт 95 399; сырые суммы дали бы 194 252 / 198 556."""
+        rows = [
+            {"Контрагент_Key": "ev", "ТипРасчетов": "Аванс",
+             "СуммаOpeningBalance": 20781, "СуммаReceipt": 95399,
+             "СуммаExpense": 103157, "СуммаClosingBalance": 13023},
+            {"Контрагент_Key": "ev", "ТипРасчетов": "Долг",
+             "СуммаOpeningBalance": 0, "СуммаReceipt": 98853,
+             "СуммаExpense": 95399, "СуммаClosingBalance": 3454},
+        ]
+        self.assertEqual(aggregate_balances(rows)["ev"], [20781, 98853, 103157, 16477])
+
+    def test_bez_avansa_summy_ne_menyayutsya(self):
+        rows = [
+            {"Контрагент_Key": "b", "ТипРасчетов": "Долг",
+             "СуммаOpeningBalance": 100, "СуммаReceipt": 50,
+             "СуммаExpense": 40, "СуммаClosingBalance": 110},
+        ]
+        self.assertEqual(aggregate_balances(rows)["b"], [100, 50, 40, 110])
+
 
 class TestNormName(unittest.TestCase):
     def test_collapses_and_trims(self):

@@ -255,14 +255,33 @@ def _contractor_names(base_id):
 
 def aggregate_balances(rows):
     """BalanceAndTurnovers отдаёт строки в разрезе договор/документ — суммируем
-    по Контрагент_Key. Возвращает {ctg_key: [open, receipt, expense, close]}."""
+    по Контрагент_Key. Возвращает {ctg_key: [open, receipt, expense, close]}.
+
+    ★ ЗАЧЁТ АВАНСА. Когда ранее полученный аванс зачитывается в счёт отгрузки,
+    1С пишет ПАРУ служебных движений на одну сумму: приход по ТипРасчетов='Аванс'
+    и расход по 'Долг'. Денег при этом не приходит — это перенос между видами
+    задолженности. Слепая сумма Receipt/Expense завышает И оборот, И оплаты ровно
+    на сумму зачёта (июль 2026: 177 911,50 ₽ по 12 контрагентам, из них Евдокимов
+    95 399). Поэтому вычитаем зачёты из обоих оборотов:
+        оборот  = Receipt(всего) − Receipt(Аванс)
+        оплаты  = Expense(всего) − Receipt(Аванс)
+    Остатки (Opening/Closing) зачёт не искажает — их не трогаем. Проверено на
+    полной выгрузке 1С «Взаиморасчёты» по базе Губарева за июль: после поправки
+    расхождений по суммам не остаётся."""
     agg = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0])
+    zachet = defaultdict(float)
     for r in rows:
         k = r.get("Контрагент_Key")
         agg[k][0] += r.get("СуммаOpeningBalance", 0) or 0
         agg[k][1] += r.get("СуммаReceipt", 0) or 0
         agg[k][2] += r.get("СуммаExpense", 0) or 0
         agg[k][3] += r.get("СуммаClosingBalance", 0) or 0
+        if r.get("ТипРасчетов") == "Аванс":
+            zachet[k] += r.get("СуммаReceipt", 0) or 0
+    for k, z in zachet.items():
+        if z:
+            agg[k][1] -= z
+            agg[k][2] -= z
     return agg
 
 
