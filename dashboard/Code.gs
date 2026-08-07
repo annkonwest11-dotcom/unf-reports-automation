@@ -74,6 +74,15 @@ function getDashboardData() {
 }
 
 // ── СИНХРОНИЗАЦИЯ НОВЫЕ_КЛИЕНТЫ ──────────────────────────────────────────────
+//
+// ⛔️ ОТКЛЮЧЕНО 2026-08-07. Этот синк ДУБЛИРОВАЛ sync_novye.py и перезаписывал лист
+// ночью в 03:00 — из-за него в колонке H снова появлялись битые формулы, хотя в
+// питоне их давно поправили. Единственный источник НОВЫЕ_КЛИЕНТЫ теперь
+// sync_novye.py (джоб auto_novye_prodazhi, ежедневно 11:00 МСК) — он ещё и заводит
+// клиентов в СПРАВОЧНИК и присылает расхождения, чего этот скрипт не умеет.
+// Триггер снят: запустить removeSyncTrigger() ниже (или удалить его руками в
+// «Триггеры» редактора Apps Script). НЕ запускать setupDailyTrigger() заново.
+// Функция оставлена как резервный ручной запуск.
 
 function syncNewClientsFromKPI() {
   var mainSS = SpreadsheetApp.openById(MAIN_SS_ID);
@@ -120,9 +129,14 @@ function syncNewClientsFromKPI() {
       var amount = parseFloat(cellVal.replace(/\s/g, '').replace(',', '.'));
       if (isNaN(amount) || amount <= 0) continue;
 
-      var vlookupH = '=IFERROR(VLOOKUP(B' + (newRows.length + 4) +
-        ',ДАННЫЕ_Губарев!$A$4:$L$503,12,0)+VLOOKUP(B' + (newRows.length + 4) +
-        ',ДАННЫЕ_Перфильев!$A$4:$L$503,12,0),0)';
+      // ru-локаль таблицы: разделитель аргументов «;» (с запятыми ячейка даёт #ERROR!).
+      // IFERROR на КАЖДЫЙ VLOOKUP — клиент, который есть только в одной базе,
+      // всё равно отдаёт свой оборот. Совпадает с формулой из sync_novye.py.
+      var hRow = newRows.length + 4;
+      var vlookupH = '=IFERROR(VLOOKUP(B' + hRow +
+        ';ДАННЫЕ_Губарев!$A$4:$L$503;12;0);0)' +
+        '+IFERROR(VLOOKUP(B' + hRow +
+        ';ДАННЫЕ_Перфильев!$A$4:$L$503;12;0);0)';
 
       newRows.push([
         today,                    // A: дата синка
@@ -158,6 +172,21 @@ function syncNewClientsFromKPI() {
 }
 
 // Запустить один раз для установки ежедневного триггера
+// ⛔️ Снять ночной триггер синка (2026-08-07: синк переехал в sync_novye.py).
+// Запустить ОДИН РАЗ из редактора Apps Script: выбрать removeSyncTrigger → «Выполнить».
+function removeSyncTrigger() {
+  var n = 0;
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'syncNewClientsFromKPI') {
+      ScriptApp.deleteTrigger(t);
+      n++;
+    }
+  });
+  Logger.log('Удалено триггеров syncNewClientsFromKPI: ' + n);
+  return 'Удалено триггеров: ' + n;
+}
+
+// ⚠️ УСТАРЕЛО — НЕ ЗАПУСКАТЬ: вернёт ночной дубль синка (см. комментарий выше).
 function setupDailyTrigger() {
   // Удаляем старые триггеры этой функции
   ScriptApp.getProjectTriggers().forEach(function(t) {

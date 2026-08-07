@@ -1127,18 +1127,25 @@ async def auto_oborot(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def auto_novye_prodazhi(context: ContextTypes.DEFAULT_TYPE):
-    """Каждый понедельник 11:00 МСК: обновить новые продажи из KPI-таблицы +
-    автозавести новых клиентов в СПРАВОЧНИК, прислать Анне отчёт с расхождениями."""
-    if datetime.now(MSK).weekday() != 0:  # только понедельник (0)
-        return
-    logger.info("Starting weekly novye-prodazhi sync")
+    """Каждый день 11:00 МСК: обновить новые продажи из KPI-таблицы +
+    автозавести новых клиентов в СПРАВОЧНИК, прислать Анне отчёт с расхождениями.
+
+    Было по понедельникам, стало ежедневно (2026-08-07): отключён GAS-триггер
+    syncNewClientsFromKPI, который делал то же самое ночью в 03:00 и писал в лист
+    битые формулы. Чтобы не спамить, полный отчёт уходит по понедельникам, в
+    остальные дни — только если есть заведённые клиенты или расхождения."""
+    is_monday = datetime.now(MSK).weekday() == 0
+    logger.info("Starting novye-prodazhi sync (monday=%s)", is_monday)
     try:
         import asyncio
         loop = asyncio.get_event_loop()
         rep = await loop.run_in_executor(None, sync_novye)
         logger.info("Novye sync: rows=%d added=%d disc=%d",
                     rep["novye_rows"], len(rep["added"]), len(rep["discrepancies"]))
-        if ANNA_CHAT_ID:
+        # В будни без новостей молчим — синк идёт каждый день, отчёт нужен
+        # по понедельникам либо когда реально есть что показать.
+        has_news = bool(rep["added"] or rep["discrepancies"])
+        if ANNA_CHAT_ID and (is_monday or has_news):
             total = f"{rep['novye_total']:,.0f}".replace(",", " ")
             lines = [
                 f"🗓 Новые продажи обновлены (KPI «{rep['kpi_sheet']}»)",
