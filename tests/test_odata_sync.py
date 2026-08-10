@@ -128,6 +128,51 @@ class TestPlanUpdates(unittest.TestCase):
         self.assertEqual(new, [])
 
 
+class TestSoftMatch(unittest.TestCase):
+    """Мягкий матч имён: карточки в 1С переименовывают на ходу, и строгое
+    сравнение отдавало нули (10.08.2026 так потерялось 849 тыс. в файле РОП)."""
+
+    def _row(self, sheet_name, odata_name):
+        updates, new = plan_updates([sheet_name], {odata_name: [1, 2, 3, 4]},
+                                    aliases={}, skip=set())
+        return updates, new
+
+    def test_transfer_mark_matches_same_client(self):
+        up, new = self._row("ТЕРРИН (ООО ГАСТРОКЛУБ)",
+                            "ТЕРРИН (ООО ГАСТРОКЛУБ) с 10.08.26 на ПЕРФИЛЬЕВ")
+        self.assertEqual(up, [(DATA_START_ROW, [1, 2, 3, 4])])
+        self.assertEqual(new, [])
+
+    def test_search_mark_matches(self):
+        up, _ = self._row("BURO Tsum (ООО Ресторанные Технологии) dsbx",
+                          "BURO Tsum (ООО Ресторанные Технологии) dsbx бюро ")
+        self.assertEqual(up, [(DATA_START_ROW, [1, 2, 3, 4])])
+
+    def test_word_order_and_legal_form(self):
+        up, _ = self._row("РУБИН ООО (ЖАН ЖАК РАДИЩЕВСКАЯ)",
+                          "ЖАН ЖАК РАДИЩЕВСКАЯ (ООО РУБИН)")
+        self.assertEqual(up, [(DATA_START_ROW, [1, 2, 3, 4])])
+
+    def test_yo_and_e_are_same_letter(self):
+        up, _ = self._row("СЕВЕРЯНЕ (ООО ВАСИЛЕК)", "СЕВЕРЯНЕ (ООО ВАСИЛЁК)")
+        self.assertEqual(up, [(DATA_START_ROW, [1, 2, 3, 4])])
+
+    def test_different_clients_do_not_stick(self):
+        """Общие «физ лицо нал» не должны склеивать разных клиентов."""
+        up, new = self._row("Елена физ лицо Северяне нал", "Онегин физ лицо нал")
+        self.assertEqual(up, [])
+        self.assertEqual(len(new), 1)
+
+    def test_ambiguous_match_is_refused(self):
+        """Два одинаково похожих кандидата — деньги никому не приписываем."""
+        updates, new = plan_updates(
+            ["Кафе Х (ООО Ромашка)", "Кафе Х (ООО Ромашка) счет"],
+            {"Кафе Х (ООО Ромашка) ЭДО новый": [1, 2, 3, 4]},
+            aliases={}, skip=set())
+        self.assertEqual(updates, [])
+        self.assertEqual(len(new), 1)
+
+
 class TestCurrentMonthPeriod(unittest.TestCase):
     def test_mid_year(self):
         start, end = _current_month_period(datetime(2026, 7, 23))
