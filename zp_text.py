@@ -345,6 +345,11 @@ def finish(out, total, name, pay):
                    f"({rub(av_card)} на карту + {rub(av_cash)} наличными)")
     elif av_card or av_cash:
         out.append(f"−{rub(av_card + av_cash)} аванс")
+    # официальную часть показываем строкой, как аванс: ИТОГ берётся из колонки
+    # «Остаток 10 — наличными», где она уже вычтена, — без этой строки в тексте
+    # получалась необъяснённая дырка между «начисления − аванс» и ИТОГом
+    if zp_card:
+        out.append(f"−{rub(zp_card)} официальная зарплата на карту")
     out += ["", f"ИТОГ {big(rest)}"]
     if not zp_card:
         out.append("")
