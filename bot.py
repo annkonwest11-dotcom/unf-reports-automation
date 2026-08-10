@@ -1269,16 +1269,19 @@ def main():
     app.job_queue.run_daily(auto_oborot, time=dtime(10, 35, 0, tzinfo=MSK))
     app.job_queue.run_daily(auto_watch_otvetstvennye, time=dtime(10, 40, 0, tzinfo=MSK))
     app.job_queue.run_daily(auto_novye_prodazhi, time=dtime(11, 0, 0, tzinfo=MSK))
-    # Выплаты официальным: опрос ADesk каждый час 10:00-15:00 МСК; активен только
-    # в дни 24-25 (аванс) и 9-10 (ЗП) — проверка дня внутри auto_avansy.
-    for _hh in range(10, 16):
+    # Выплаты официальным: активен только в дни 24-25 (аванс) и 9-10 (ЗП) —
+    # проверка дня внутри auto_avansy. В окне 10:00-12:00 бухгалтерия и проводит
+    # платежи, поэтому там опрос каждые 20 минут; дальше ежечасно до 15:00.
+    for _hh, _mm in [(h, m) for h in (10, 11) for m in (0, 20, 40)] + [(12, 0)]:
+        app.job_queue.run_daily(auto_avansy, time=dtime(_hh, _mm, 0, tzinfo=MSK))
+    for _hh in range(13, 16):
         app.job_queue.run_daily(auto_avansy, time=dtime(_hh, 0, 0, tzinfo=MSK))
 
     # пакет расчётов ЗП: 5 числа и 10-го после появления официальной зарплаты.
     # Ежечасно (проверка дня и отметки «уже слали» — внутри auto_zp_monthly);
-    # :20 — чтобы auto_avansy в HH:00 успел проставить колонку «ЗП 9 — на карту».
+    # :25 — чтобы опрос выплат в HH:20 успел проставить колонку «ЗП 9 — на карту».
     for _hh in range(10, 19):
-        app.job_queue.run_daily(auto_zp_monthly, time=dtime(_hh, 20, 0, tzinfo=MSK))
+        app.job_queue.run_daily(auto_zp_monthly, time=dtime(_hh, 25, 0, tzinfo=MSK))
 
     logger.info("Bot is running…")
     app.run_polling(allowed_updates=Update.ALL_TYPES)

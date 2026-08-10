@@ -316,6 +316,65 @@ def norm_name(s):
     return re.sub(r"\s+", " ", (s or "").strip()).lower()
 
 
+# Слова, которые к одному и тому же контрагенту дописывают по-разному в 1С и в
+# листе: форма собственности, канал обмена, служебные пометки менеджеров.
+_NOISE_WORDS = {
+    "ооо", "оао", "зао", "пао", "ип", "чп", "нко",
+    "эдо", "dsbx", "1с", "1c", "счет", "счёт", "нал", "наличка", "перевод",
+    "адрес", "дост", "доставка", "менять", "новый", "старый",
+}
+# Хвост «с 10.08.26 на ПЕРФИЛЬЕВ» — пометка о переводе клиента между базами.
+_TRANSFER_TAIL = re.compile(r"\s+с\s*\d{2}\.\d{2}\.\d{2,4}\s*на\s+\S+\s*$", re.I)
+
+
+def name_tokens(s):
+    """Значимые слова имени: ё→е, без пунктуации, форм собственности и пометок.
+
+    Нужны, когда одну и ту же карточку в 1С и в листе назвали по-разному:
+    приписали пометку о переводе («… с 10.08.26 на ПЕРФИЛЬЕВ»), дописали метку
+    для поиска («dsbx бюро», «ензо»), переставили слова («ЖАН ЖАК (ООО РУБИН)»
+    ↔ «РУБИН ООО (ЖАН ЖАК)») или разошлись в ё/е («ВАСИЛЁК» ↔ «ВАСИЛЕК»).
+    """
+    s = _TRANSFER_TAIL.sub("", str(s or ""))
+    s = re.sub(r"[^\w\s'-]", " ", s.replace("ё", "е").replace("Ё", "Е").lower())
+    return frozenset(w for w in s.split()
+                     if len(w) > 2 and w not in _NOISE_WORDS
+                     and not w.replace(".", "").replace("-", "").isdigit())
+
+
+def build_token_index(names):
+    """[(токены, имя)] для мягкого матча; имена без значимых слов пропускаем."""
+    out = []
+    for n in names:
+        t = name_tokens(n)
+        if t:
+            out.append((t, n))
+    return out
+
+
+def soft_lookup(name, index):
+    """Единственный кандидат из index, описывающий того же контрагента.
+
+    Совпадением считаем равенство наборов слов или вложенность одного в другой
+    при двух и более общих словах — этого хватает на пометки и перестановки, но
+    мало для случайных пересечений («Онегин физ лицо нал» не липнет к «Елена физ
+    лицо Северяне нал»). Если подходит больше одного — возвращаем None: лучше
+    оставить строку пустой, чем приписать деньги чужому клиенту.
+    """
+    t = name_tokens(name)
+    if not t:
+        return None
+    hits = []
+    for cand_t, cand_name in index:
+        common = t & cand_t
+        if len(common) >= 2 and (common == t or common == cand_t):
+            hits.append(cand_name)
+        elif t == cand_t:
+            hits.append(cand_name)
+    uniq = set(hits)
+    return hits[0] if len(uniq) == 1 else None
+
+
 def plan_updates(sheet_col_a, odata_balances, aliases=None, skip=None):
     """Составляет план записи, сопоставляя данные OData со строками листа.
 
@@ -341,6 +400,9 @@ def plan_updates(sheet_col_a, odata_balances, aliases=None, skip=None):
         if key and key not in index:  # первая (рабочая) строка при дублях
             index[key] = DATA_START_ROW + i
 
+    # для карточек, не совпавших по имени точно: ищем ту же строку по словам
+    tok_index = build_token_index(index.keys())
+
     row_sums = {}  # row → [b,c,d,e] (аккумулятор)
     new_clients = []
     for name, vals in odata_balances.items():
@@ -349,6 +411,11 @@ def plan_updates(sheet_col_a, odata_balances, aliases=None, skip=None):
             continue
         target = norm_name(alias_norm[nn]) if nn in alias_norm else nn
         row = index.get(target)
+        if row is None:
+            soft = soft_lookup(target, tok_index)
+            if soft is not None:
+                row = index.get(soft)
+                logger.info("Мягкий матч: «%s» → строка %s («%s»)", name, row, soft)
         if row is not None:
             acc = row_sums.setdefault(row, [0.0, 0.0, 0.0, 0.0])
             for j in range(4):

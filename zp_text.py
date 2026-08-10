@@ -345,6 +345,11 @@ def finish(out, total, name, pay):
                    f"({rub(av_card)} на карту + {rub(av_cash)} наличными)")
     elif av_card or av_cash:
         out.append(f"−{rub(av_card + av_cash)} аванс")
+    # официальную часть показываем строкой, как аванс: ИТОГ берётся из колонки
+    # «Остаток 10 — наличными», где она уже вычтена, — без этой строки в тексте
+    # получалась необъяснённая дырка между «начисления − аванс» и ИТОГом
+    if zp_card:
+        out.append(f"−{rub(zp_card)} официальная зарплата на карту")
     out += ["", f"ИТОГ {big(rest)}"]
     if not zp_card:
         out.append("")
@@ -436,7 +441,9 @@ def department_summary(ss=None):
                   f"{col(totals[2]):>9} {col(totals[3]):>9} {col(totals[4]):>9}")
 
     table = "\n".join([head, "─" * len(head)] + body + ["─" * len(head), total_line])
-    out = [f"📋 ТАБЛИЦА ВЫПЛАТ — {month}", "", f"<pre>{escape(table)}</pre>"]
+    fot = num(sh.grid[sh.find("ИТОГО ФОТ ЗА МЕСЯЦ")][2]) if sh.find("ИТОГО ФОТ") >= 0 else totals[0]
+    out = [f"📋 ТАБЛИЦА ВЫПЛАТ — {month}", "", f"<pre>{escape(table)}</pre>", "",
+           f"💰 ФОТ ЗА МЕСЯЦ: {big(fot)} ₽"]
     if not totals[3]:
         out.append("Официальная ЗП («ЗП 9 — на карту») ещё не проставлена.")
     return "\n".join(out)
@@ -462,7 +469,8 @@ def cash_summary(ss=None):
         total += rest
         note = "  — всё выплачено авансом" if not rest else ""
         lines.append(f"{SHORT.get(name, name)}: {big(rest)}{note}")
-    lines += ["", f"ВСЕГО НАЛИЧНЫМИ: {big(total)} ₽"]
+    fot = num(sh.grid[sh.find("ИТОГО ФОТ ЗА МЕСЯЦ")][2]) if sh.find("ИТОГО ФОТ") >= 0 else 0.0
+    lines += ["", f"ВСЕГО НАЛИЧНЫМИ: {big(total)} ₽", f"ФОТ ЗА МЕСЯЦ: {big(fot)} ₽"]
     if not any(v[3] for v in pay.values()):
         lines.append("")
         lines.append("(официальная зарплата ещё не проставлена — суммы уменьшатся, "

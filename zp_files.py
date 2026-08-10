@@ -24,7 +24,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from sync_odata import (BASES, ALIASES, DATA_START_ROW, _contractor_names, _fetch_odata,
                         _open_spreadsheet, _parse_settings_period, aggregate_balances,
-                        norm_name)
+                        build_token_index, norm_name, soft_lookup)
 from zp_text import MONTHS, Sheet, big, num
 
 _ALIAS_NORM = {norm_name(k): v for k, v in ALIASES.items()}
@@ -39,6 +39,20 @@ WIDTHS = (("A", 46.6), ("B", 15.2), ("C", 21.0), ("D", 21.0), ("E", 38.0),
 def canon(name):
     nn = norm_name(name)
     return norm_name(_ALIAS_NORM[nn]) if nn in _ALIAS_NORM else nn
+
+
+def balance_for(name, bal, index):
+    """Движения контрагента: точно по имени, иначе — мягким матчем по словам.
+
+    Карточки в 1С переименовывают на ходу («… с 10.08.26 на ПЕРФИЛЬЕВ», метки
+    «dsbx бюро», «ензо»), и строгий матч отдавал нули — файл недобирал сотни
+    тысяч против листа. Логика подбора — sync_odata.soft_lookup.
+    """
+    c = canon(name)
+    if c in bal:
+        return bal[c]
+    soft = soft_lookup(c, index)
+    return bal[soft] if soft in bal else [0.0, 0.0, 0.0, 0.0]
 
 
 def _period(ss):
@@ -167,10 +181,11 @@ def build_files(only=None, outdir=None):
         if nm:
             beby[canon(nm)] = (num(r[5] if len(r) > 5 else 0), num(r[7] if len(r) > 7 else 0))
 
-    grids, bals = {}, {}
+    grids, bals, soft_idx = {}, {}, {}
     for base_name, cfg in BASES.items():
         grids[base_name] = ss.worksheet(cfg["sheet_name"]).get("A1:L600")
         bals[base_name] = load_balances(cfg["id"], start, end)
+        soft_idx[base_name] = build_token_index(bals[base_name].keys())
 
     def kpi(who, label, col=3):
         """Значение строки блока сотрудника из СВОДНОЙ (C по умолчанию, E при col=5)."""
@@ -236,7 +251,8 @@ def build_files(only=None, outdir=None):
                 if not rep["pred"](f, g, h):
                     continue
                 c = canon(name)
-                vals = [round(x, 2) for x in bals[base_name].get(c, [0.0, 0.0, 0.0, 0.0])]
+                vals = [round(x, 2)
+                        for x in balance_for(name, bals[base_name], soft_idx[base_name])]
                 records.append((name, vals, num(r[9] if len(r) > 9 else 0), beby.get(c)))
         records.sort(key=lambda x: (x[0][0].lower() > "я", x[0].lower()))
         if not records:
