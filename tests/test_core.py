@@ -60,8 +60,8 @@ class TestParser(unittest.TestCase):
 
 
 def _shifts_fixture():
-    """Снимок раскладки листа СМЕНЫ (после удаления Лианны/Абрамовой 2026-07-11):
-    осн. смены строки 5-10, подработки 15-17. Колонки: A=№, B=ФИО, C=отдел,
+    """Снимок раскладки листа СМЕНЫ (после удаления Папоян 2026-08-11):
+    осн. смены строки 5-9, подработки 14-16. Колонки: A=№, B=ФИО, C=отдел,
     D=ставка, E.. = дни 1-31. Без сети — чистая логика записи смен."""
     days = [str(d) for d in range(1, 32)]
     empty = [""] * 31
@@ -72,17 +72,16 @@ def _shifts_fixture():
         ["№", "Сотрудник", "Отдел", "Ставка"] + days,               # 4 (заголовок дней)
         ["1", "Дарья Вольнова", "Отдел продаж", "2500"] + empty,     # 5
         ["2", "Ксения Наныкина", "Отдел продаж", "2500"] + empty,    # 6
-        ["3", "Валерия Папоян", "Отдел продаж", "2500"] + empty,     # 7
-        ["4", "Алена Черкашина", "Отдел продаж", "2500"] + empty,    # 8
-        ["5", "Владислава Герасимчук", "Отдел продаж", "3000"] + empty,  # 9
-        ["6", "Анна Кононенко (РОП)", "Отдел продаж", "5000"] + empty,   # 10
+        ["3", "Алена Черкашина", "Отдел продаж", "2500"] + empty,    # 7
+        ["4", "Владислава Герасимчук", "Отдел продаж", "3000"] + empty,  # 8
+        ["5", "Анна Кононенко (РОП)", "Отдел продаж", "5000"] + empty,   # 9
+        ["", "", "", ""] + empty,                                    # 10
         ["", "", "", ""] + empty,                                    # 11
-        ["", "", "", ""] + empty,                                    # 12
-        ["ПОДРАБОТКИ (выходные смены, доп. ставки)", "", "", ""] + empty,  # 13
-        ["№", "", "", ""] + empty,                                   # 14
-        ["1", "Алена Черкашина", "Отдел продаж", ""] + empty,        # 15
-        ["2", "Владислава Герасимчук", "Отдел продаж", ""] + empty,  # 16
-        ["3", "Анна Кононенко (РОП)", "Отдел продаж", ""] + empty,   # 17
+        ["ПОДРАБОТКИ (выходные смены, доп. ставки)", "", "", ""] + empty,  # 12
+        ["№", "", "", ""] + empty,                                   # 13
+        ["1", "Алена Черкашина", "Отдел продаж", ""] + empty,        # 14
+        ["2", "Владислава Герасимчук", "Отдел продаж", ""] + empty,  # 15
+        ["3", "Анна Кононенко (РОП)", "Отдел продаж", ""] + empty,   # 16
     ]
 
 
@@ -116,7 +115,7 @@ class TestShiftWriting(unittest.TestCase):
         return {w[0]: w[2] for w in self.fake.writes}  # {row: value}
 
     def test_poisk_osn_2500(self):
-        for who, row in [("Дарья Вольнова", 5), ("Ксения Наныкина", 6), ("Валерия Папоян", 7)]:
+        for who, row in [("Дарья Вольнова", 5), ("Ксения Наныкина", 6)]:
             got = self._run(f"Смена Менеджер поиск\nСотрудник: {who}\nДата: 15\nЗвонки всего: 20")
             self.assertEqual(got.get(row), "2500", who)
 
@@ -125,91 +124,91 @@ class TestShiftWriting(unittest.TestCase):
     def test_vlada_budni_yes(self):
         # будни=да → осн.3000 + подраб.2000
         got = self._run(self._V + "Заказы будни (да/нет): да\nЗаказы выхи (да/нет):")
-        self.assertEqual(got.get(9), "3000")
-        self.assertEqual(got.get(16), "2000")
+        self.assertEqual(got.get(8), "3000")
+        self.assertEqual(got.get(15), "2000")
 
     def test_vlada_budni_no(self):
         # будни=нет, выхи пусто → только осн.3000
         got = self._run(self._V + "Заказы будни (да/нет): нет\nЗаказы выхи (да/нет):")
-        self.assertEqual(got.get(9), "3000")
-        self.assertEqual(got.get(16), "")
+        self.assertEqual(got.get(8), "3000")
+        self.assertEqual(got.get(15), "")
 
     def test_vlada_vyhi_yes(self):
         # выхи=да → осн.не ставим, только подраб.2000
         got = self._run(self._V + "Заказы будни (да/нет):\nЗаказы выхи (да/нет): да")
-        self.assertEqual(got.get(9), "")
-        self.assertEqual(got.get(16), "2000")
+        self.assertEqual(got.get(8), "")
+        self.assertEqual(got.get(15), "2000")
 
     def test_vlada_both_no(self):
         # оба нет/пусто → осн.3000 (Анна, 2026-07-11)
         got = self._run(self._V + "Заказы будни (да/нет): нет\nЗаказы выхи (да/нет): нет")
-        self.assertEqual(got.get(9), "3000")
-        self.assertEqual(got.get(16), "")
+        self.assertEqual(got.get(8), "3000")
+        self.assertEqual(got.get(15), "")
 
     def test_vlada_autofill_employee(self):
         # ФИО не заполнено — именной шаблон подставляет «Владислава Герасимчук»
         got = self._run("Смена Влада\nДата: 15\nЗаказы выхи (да/нет): да")
-        self.assertEqual(got.get(9), "")
-        self.assertEqual(got.get(16), "2000")
+        self.assertEqual(got.get(8), "")
+        self.assertEqual(got.get(15), "2000")
 
     def test_vlada_vyhi_no_colon(self):
         # «Заказы выхи (да/нет)да» без двоеточия — значение распознаётся
         got = self._run(self._V + "Заказы будни (да/нет): нет\nЗаказы выхи (да/нет)да")
-        self.assertEqual(got.get(9), "")
-        self.assertEqual(got.get(16), "2000")
+        self.assertEqual(got.get(8), "")
+        self.assertEqual(got.get(15), "2000")
 
     def test_vlada_tasks_with_keyword_not_field(self):
         # строка задачи, начинающаяся не с ключа, не ломает поля (осн.3000 остаётся)
         got = self._run(self._V + "Выполненные задачи: разобрал заказы будни утром\nЗаказы будни (да/нет): да")
-        self.assertEqual(got.get(9), "3000")
-        self.assertEqual(got.get(16), "2000")
+        self.assertEqual(got.get(8), "3000")
+        self.assertEqual(got.get(15), "2000")
 
     def test_vlada_legacy_orders_yes(self):
         # обратная совместимость: старое поле «Заказы (да/нет)» = будни
         got = self._run(self._V + "Заказы (да/нет): да")
-        self.assertEqual(got.get(9), "3000")
-        self.assertEqual(got.get(16), "2000")
+        self.assertEqual(got.get(8), "3000")
+        self.assertEqual(got.get(15), "2000")
 
     def test_vlada_legacy_orders_no(self):
         got = self._run(self._V + "Заказы (да/нет): нет")
-        self.assertEqual(got.get(9), "3000")
-        self.assertEqual(got.get(16), "")
+        self.assertEqual(got.get(8), "3000")
+        self.assertEqual(got.get(15), "")
 
     def test_soprovozhdenie_budniy(self):
         got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: будний\nФирмы: нет")
-        self.assertEqual(got.get(8), "2500")
-        self.assertEqual(got.get(15), "")
+        self.assertEqual(got.get(7), "2500")
+        self.assertEqual(got.get(14), "")
 
     def test_soprovozhdenie_budniy_firmy(self):
         # Фирмы дают подработку в ЛЮБОЙ день (Анна, 2026-07-11): будни → осн.2500 + фирмы 1800
         got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: будний\nФирмы: да")
-        self.assertEqual(got.get(8), "2500")
-        self.assertEqual(got.get(15), "1800")
+        self.assertEqual(got.get(7), "2500")
+        self.assertEqual(got.get(14), "1800")
 
     def test_soprovozhdenie_vyhodnoy_firmy_2tel(self):
         got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: выходной\nФирмы: да\nЗаказы выходные: 2")
-        self.assertEqual(got.get(8), "")
-        self.assertEqual(got.get(15), "3900")  # 1800 фирмы + 2100 тел2
+        self.assertEqual(got.get(7), "")
+        self.assertEqual(got.get(14), "3900")  # 1800 фирмы + 2100 тел2
 
     def test_soprovozhdenie_vyhodnoy_rest_1tel(self):
         got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: выходной\nФирмы: нет\nЗаказы выходные: 1")
-        self.assertEqual(got.get(15), "1800")
+        self.assertEqual(got.get(14), "1800")
 
     def test_soprovozhdenie_vyhodnoy_rest_2tel(self):
         got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: выходной\nФирмы: нет\nЗаказы выходные: 2")
-        self.assertEqual(got.get(15), "2100")
+        self.assertEqual(got.get(14), "2100")
 
     def test_soprovozhdenie_budniy_dop_tel(self):
         got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: будний\nФирмы: нет\nЗаказы будние: да")
-        self.assertEqual(got.get(8), "2500")
-        self.assertEqual(got.get(15), "1800")
+        self.assertEqual(got.get(7), "2500")
+        self.assertEqual(got.get(14), "1800")
 
     def test_rop_auto_shift(self):
         sc = self._client()
         ok = sc.write_shift("Анна Кононенко (РОП)", 15)
         self.assertTrue(ok)
         got = {w[0]: w[2] for w in self.fake.writes}
-        self.assertEqual(got.get(10), "5000")
+        self.assertEqual(got.get(9), "5000")
 
 
 class TestPeriodHelpers(unittest.TestCase):

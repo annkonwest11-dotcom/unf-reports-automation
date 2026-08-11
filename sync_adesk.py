@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 ADESK_URL = "https://api.adesk.ru/v1/transactions"
 ADESK_TOKEN = os.environ.get("ADESK_TOKEN")
-POSTUP_CELL = "E92"          # Блок 4 РОП «Факт — поступления (всего, АДЕСК)»
+POSTUP_CELL = "E78"          # Блок 4 РОП «Факт — поступления (всего, АДЕСК)»
 _TYPE_INCOME = 1             # 1 = приход/поступление, 2 = расход
 
 

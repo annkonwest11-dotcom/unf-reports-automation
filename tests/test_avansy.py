@@ -79,8 +79,8 @@ class TestFetchAndSync(unittest.TestCase):
         self.assertEqual(rep["col"], "C")
         self.assertEqual(len(rep["items"]), 4)
         cells = {it["cell"]: it["amount"] for it in rep["items"]}
-        self.assertEqual(cells, {"C127": 12253, "C128": 12253,
-                                 "C130": 12253, "C131": 12253})
+        self.assertEqual(cells, {"C113": 12253, "C114": 12253,
+                                 "C115": 12253, "C116": 12253})
         self.assertEqual(rep["missing"], [])
 
     def test_zp_uses_second_half_and_col_E(self):
@@ -91,7 +91,7 @@ class TestFetchAndSync(unittest.TestCase):
         rep = sa.sync_avansy("zp", today=__import__("datetime").datetime(2026, 8, 10), apply=False)
         self.assertEqual(rep["col"], "E")
         cells = {it["cell"]: it["amount"] for it in rep["items"]}
-        self.assertEqual(cells, {"E127": 14640, "E130": 14640})
+        self.assertEqual(cells, {"E113": 14640, "E115": 14640})
         # Ксения и Владислава не выплачены → в missing
         self.assertIn("Ксения Наныкина", rep["missing"])
         self.assertIn("Владислава Герасимчук", rep["missing"])
@@ -146,24 +146,24 @@ class TestOnlyChanged(unittest.TestCase):
             _tx("Вольнова Дарья Павловна", "12253.78", "2026-07-24", "первую половину месяца"),
             _tx("Наныкина Ксения Сергеевна", "12253.78", "2026-07-24", "первую половину месяца"),
         ])
-        # Дарья уже стоит в C127 той же суммой → не меняется; Ксения C128 пусто → новая
-        ws = FakeWS(current={"C127": 12253, "C128": None, "C130": None, "C131": None})
+        # Дарья уже стоит в C113 той же суммой → не меняется; Ксения C114 пусто → новая
+        ws = FakeWS(current={"C113": 12253, "C114": None, "C115": None, "C116": None})
         rep = sa.sync_avansy("avans", today=_dt.datetime(2026, 7, 24),
                              apply=True, only_changed=True, ws=ws)
         changed_cells = {it["cell"] for it in rep["changed"]}
-        self.assertEqual(changed_cells, {"C128"})           # только Ксения
-        self.assertEqual(ws.written, [("C128", 12253)])  # записана только она
+        self.assertEqual(changed_cells, {"C114"})           # только Ксения
+        self.assertEqual(ws.written, [("C114", 12253)])  # записана только она
 
     def test_changed_when_amount_differs(self):
         import datetime as _dt
         self._install([
             _tx("Вольнова Дарья Павловна", "13000", "2026-07-25", "первую половину месяца"),
         ])
-        ws = FakeWS(current={"C127": 12253, "C128": None, "C130": None, "C131": None})
+        ws = FakeWS(current={"C113": 12253, "C114": None, "C115": None, "C116": None})
         rep = sa.sync_avansy("avans", today=_dt.datetime(2026, 7, 25),
                              apply=True, only_changed=True, ws=ws)
-        self.assertEqual([it["cell"] for it in rep["changed"]], ["C127"])
-        self.assertEqual(ws.written, [("C127", 13000.0)])
+        self.assertEqual([it["cell"] for it in rep["changed"]], ["C113"])
+        self.assertEqual(ws.written, [("C113", 13000.0)])
 
 
 if __name__ == "__main__":

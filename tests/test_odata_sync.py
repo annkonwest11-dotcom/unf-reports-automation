@@ -38,6 +38,28 @@ class TestAggregate(unittest.TestCase):
                  "СуммаClosingBalance": None}]
         self.assertEqual(aggregate_balances(rows)["a"], [0, 0, 0, 0])
 
+    def test_zachet_avansa_ne_razduvaet_oboroty(self):
+        """Зачёт аванса (приход по 'Аванс' + расход по 'Долг') — перенос, не деньги.
+        Реальный случай: Евдокимов, июль 2026. Отгрузка 98 853, оплаты 103 157,
+        зачёт 95 399; сырые суммы дали бы 194 252 / 198 556."""
+        rows = [
+            {"Контрагент_Key": "ev", "ТипРасчетов": "Аванс",
+             "СуммаOpeningBalance": 20781, "СуммаReceipt": 95399,
+             "СуммаExpense": 103157, "СуммаClosingBalance": 13023},
+            {"Контрагент_Key": "ev", "ТипРасчетов": "Долг",
+             "СуммаOpeningBalance": 0, "СуммаReceipt": 98853,
+             "СуммаExpense": 95399, "СуммаClosingBalance": 3454},
+        ]
+        self.assertEqual(aggregate_balances(rows)["ev"], [20781, 98853, 103157, 16477])
+
+    def test_bez_avansa_summy_ne_menyayutsya(self):
+        rows = [
+            {"Контрагент_Key": "b", "ТипРасчетов": "Долг",
+             "СуммаOpeningBalance": 100, "СуммаReceipt": 50,
+             "СуммаExpense": 40, "СуммаClosingBalance": 110},
+        ]
+        self.assertEqual(aggregate_balances(rows)["b"], [100, 50, 40, 110])
+
 
 class TestNormName(unittest.TestCase):
     def test_collapses_and_trims(self):
@@ -104,6 +126,51 @@ class TestPlanUpdates(unittest.TestCase):
         updates, new = plan_updates(col_a, balances, aliases={}, skip={"мусор 123"})
         self.assertEqual(updates, [])
         self.assertEqual(new, [])
+
+
+class TestSoftMatch(unittest.TestCase):
+    """Мягкий матч имён: карточки в 1С переименовывают на ходу, и строгое
+    сравнение отдавало нули (10.08.2026 так потерялось 849 тыс. в файле РОП)."""
+
+    def _row(self, sheet_name, odata_name):
+        updates, new = plan_updates([sheet_name], {odata_name: [1, 2, 3, 4]},
+                                    aliases={}, skip=set())
+        return updates, new
+
+    def test_transfer_mark_matches_same_client(self):
+        up, new = self._row("ТЕРРИН (ООО ГАСТРОКЛУБ)",
+                            "ТЕРРИН (ООО ГАСТРОКЛУБ) с 10.08.26 на ПЕРФИЛЬЕВ")
+        self.assertEqual(up, [(DATA_START_ROW, [1, 2, 3, 4])])
+        self.assertEqual(new, [])
+
+    def test_search_mark_matches(self):
+        up, _ = self._row("BURO Tsum (ООО Ресторанные Технологии) dsbx",
+                          "BURO Tsum (ООО Ресторанные Технологии) dsbx бюро ")
+        self.assertEqual(up, [(DATA_START_ROW, [1, 2, 3, 4])])
+
+    def test_word_order_and_legal_form(self):
+        up, _ = self._row("РУБИН ООО (ЖАН ЖАК РАДИЩЕВСКАЯ)",
+                          "ЖАН ЖАК РАДИЩЕВСКАЯ (ООО РУБИН)")
+        self.assertEqual(up, [(DATA_START_ROW, [1, 2, 3, 4])])
+
+    def test_yo_and_e_are_same_letter(self):
+        up, _ = self._row("СЕВЕРЯНЕ (ООО ВАСИЛЕК)", "СЕВЕРЯНЕ (ООО ВАСИЛЁК)")
+        self.assertEqual(up, [(DATA_START_ROW, [1, 2, 3, 4])])
+
+    def test_different_clients_do_not_stick(self):
+        """Общие «физ лицо нал» не должны склеивать разных клиентов."""
+        up, new = self._row("Елена физ лицо Северяне нал", "Онегин физ лицо нал")
+        self.assertEqual(up, [])
+        self.assertEqual(len(new), 1)
+
+    def test_ambiguous_match_is_refused(self):
+        """Два одинаково похожих кандидата — деньги никому не приписываем."""
+        updates, new = plan_updates(
+            ["Кафе Х (ООО Ромашка)", "Кафе Х (ООО Ромашка) счет"],
+            {"Кафе Х (ООО Ромашка) ЭДО новый": [1, 2, 3, 4]},
+            aliases={}, skip=set())
+        self.assertEqual(updates, [])
+        self.assertEqual(len(new), 1)
 
 
 class TestCurrentMonthPeriod(unittest.TestCase):
