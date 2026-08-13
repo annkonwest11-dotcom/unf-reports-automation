@@ -178,6 +178,12 @@ def short_name(s):
     return re.split(r"[(\[]", s)[0].strip() or s.strip()
 
 
+def task_name(s):
+    """Имя для чек-листов задач: как в 1С, ВМЕСТЕ с юр. лицом в скобках (правило
+    Анны 13.08 — менеджеры не понимали, на какое юр. лицо звонить)."""
+    return " ".join(str(s).split())
+
+
 def load_directory(gc):
     """Индексы справочника для матчинга имён 1С ↔ справочник."""
     ref = gc.open_by_key(SALARY_SPREADSHEET).worksheet("СПРАВОЧНИК").get_all_values()
@@ -340,7 +346,7 @@ def add_checklist(tid, lines):
 def checklist_line(r):
     last = datetime.date.fromisoformat(r["last"]).strftime("%d.%m")
     gap = f"{r['median_gap']:.0f}" if r["median_gap"] else "?"
-    return (f"{short_name(r['client'])} — {r['since_last']} дн. без заказа — "
+    return (f"{task_name(r['client'])} — {r['since_last']} дн. без заказа — "
             f"берут раз в {gap} дн. — последний {last}")
 
 
@@ -360,7 +366,8 @@ def create_tasks(dist, today):
         desc = (f"Связаться с клиентами и напомнить про заказ на завтра ({tomorrow}).\n\n"
                 f"В списке {len(clients)} {kind}, выпавших из обычного ритма закупок "
                 f"(по данным 1С за {HIST_DAYS // 7} недель).\n"
-                f"Формат: клиент — дней без заказа — обычная периодичность — дата последнего заказа.")
+                f"Формат: клиент (юр. лицо) — дней без заказа — обычная периодичность — "
+                f"дата последнего заказа.")
         title = ("Напомнить о заказе на завтра — ФИРМЫ" if is_firms
                  else "Напомнить о заказе на завтра")
         task = _bitrix("tasks.task.add", {"fields": {
