@@ -157,6 +157,13 @@ class TestSoftMatch(unittest.TestCase):
         up, _ = self._row("СЕВЕРЯНЕ (ООО ВАСИЛЕК)", "СЕВЕРЯНЕ (ООО ВАСИЛЁК)")
         self.assertEqual(up, [(DATA_START_ROW, [1, 2, 3, 4])])
 
+    def test_hyphen_is_a_word_separator(self):
+        """Джаннет 14.08: в 1С «БУТИК-БАР», в листе «БУТИК БАР» — один клиент."""
+        up, new = self._row("ВИННЫЙ БУТИК БАР ДЖАННЕТ (ООО ВИНОТЕКА ТУШИНО) в 1С/ЭДО",
+                            "ВИННЫЙ БУТИК-БАР ДЖАННЕТ (ООО ВИНОТЕКА ТУШИНО)")
+        self.assertEqual(up, [(DATA_START_ROW, [1, 2, 3, 4])])
+        self.assertEqual(new, [])
+
     def test_different_clients_do_not_stick(self):
         """Общие «физ лицо нал» не должны склеивать разных клиентов."""
         up, new = self._row("Елена физ лицо Северяне нал", "Онегин физ лицо нал")
