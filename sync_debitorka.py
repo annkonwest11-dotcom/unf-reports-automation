@@ -31,7 +31,7 @@ except Exception:
     pass
 
 import openpyxl
-from sync_rhythm import (_norm, lookup, load_directory, short_name, _bitrix,
+from sync_rhythm import (_norm, lookup, load_directory, task_name, _bitrix,
                          DEBT_SPREADSHEET, CREDENTIALS_PATH)
 from sync_odata import _fetch_odata, BASES as ODATA_BASES
 
@@ -266,9 +266,9 @@ def write_table(gc, sheets, order, today):
 
 def checklist_line(it, firm=False):
     if firm:
-        return (f"{short_name(it['name'])} — долг {round(it['total']):,} ₽ "
+        return (f"{task_name(it['name'])} — долг {round(it['total']):,} ₽ "
                 f"(просроч {round(it['overdue']):,}) — {it['days']} дн.").replace(",", " ")
-    return f"{short_name(it['name'])} — просроч {round(it['overdue']):,} ₽ — {it['days']} дн.".replace(",", " ")
+    return f"{task_name(it['name'])} — просроч {round(it['overdue']):,} ₽ — {it['days']} дн.".replace(",", " ")
 
 
 def add_checklist(tid, lines):
@@ -319,7 +319,7 @@ def plan_tasks(sheets):
                       "title": "Клиенты без менеджера / не найдены — разобрать",
                       "desc": "Клиенты, которых не удалось привязать к менеджеру (нет в справочнике "
                               "или без ответственного). Разобрать и назначить.\n"
-                              "Формат: клиент — долг (в т.ч. просрочка) — дней просрочки."})
+                              "Формат: клиент (юр. лицо) — долг (в т.ч. просрочка) — дней просрочки."})
     return tasks
 
 
@@ -334,8 +334,8 @@ def create_tasks(tasks, today):
         desc = t.get("desc") or (
             ("Долги по фирмам.\n" if firm else "Собрать просроченную задолженность по клиентам.\n")
             + f"Всего {len(items)} {noun}.\n"
-            + ("Формат: фирма — долг (в т.ч. просрочка) — дней просрочки."
-               if firm else "Формат: клиент — сумма просрочки — дней просрочки."))
+            + ("Формат: фирма (юр. лицо) — долг (в т.ч. просрочка) — дней просрочки."
+               if firm else "Формат: клиент (юр. лицо) — сумма просрочки — дней просрочки."))
         task = _bitrix("tasks.task.add", {"fields": {
             "TITLE": f"{t['title']} ({today.strftime('%d.%m.%Y')})",
             "RESPONSIBLE_ID": t["uid"], "DESCRIPTION": desc,
