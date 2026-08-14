@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 from datetime import time as dtime, timezone, timedelta, datetime
 
 from dotenv import load_dotenv
@@ -19,6 +20,7 @@ import watch_otvetstvennye
 import zp_text
 from sync_avansy import sync_avansy, format_report as _format_avansy, _open_summary_ws
 import cash_avans
+import beby_report
 
 load_dotenv()
 
@@ -456,6 +458,98 @@ ZP_STATE_FILE = os.path.join(os.path.dirname(__file__), "zp_send_state.json")
 # куда уходит автоматическая рассылка расчётов: группа «зарплата», если её id задан
 # в .env (ZP_GROUP_CHAT_ID), иначе — Анне в личку
 ZP_GROUP_CHAT_ID = os.environ.get("ZP_GROUP_CHAT_ID", "")
+
+
+# ─── беби-листы: накладная PDF → лист «аналитика беби» ────────────────────────
+
+async def handle_beby_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """PDF накладной от Анны в личке: внести в таблицу и показать текущий период."""
+    message = update.effective_message
+    doc = message.document if message else None
+    if not doc or not (doc.file_name or "").lower().endswith(".pdf"):
+        return
+    if not _is_from_anna(update) or update.effective_chat.type != "private":
+        return
+
+    await message.reply_text("📄 Разбираю накладную…")
+    tmp = os.path.join(tempfile.gettempdir(), f"beby_{doc.file_unique_id}.pdf")
+    try:
+        tg_file = await doc.get_file()
+        await tg_file.download_to_drive(tmp)
+        loop = asyncio.get_event_loop()
+        text, period = await loop.run_in_executor(
+            None, lambda: beby_report.process_invoice(tmp))
+    except Exception as e:
+        logger.exception("Beby invoice failed")
+        await message.reply_text(f"❌ Не смог разобрать накладную: {e}")
+        return
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+    sheet, d1, d2 = period
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+        f"Закрыть период {d1:%d.%m}–{d2:%d.%m}",
+        callback_data=f"beby:close:{sheet}:{d1:%Y-%m-%d}:{d2:%Y-%m-%d}")]])
+    await message.reply_text(text, reply_markup=kb)
+
+
+async def handle_beby(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/beby — как идёт текущий (незакрытый) период по беби-листам."""
+    if not _is_from_anna(update):
+        return
+    loop = asyncio.get_event_loop()
+    try:
+        sheet, d1, d2 = await loop.run_in_executor(None, _beby_current)
+        text = await loop.run_in_executor(
+            None, lambda: beby_report.period_summary(sheet, d1, d2,
+                                                     prefix="Беби-листы, текущий период\n"))
+    except Exception as e:
+        logger.exception("Beby summary failed")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+        return
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+        f"Закрыть период {d1:%d.%m}–{d2:%d.%m}",
+        callback_data=f"beby:close:{sheet}:{d1:%Y-%m-%d}:{d2:%Y-%m-%d}")]])
+    await update.message.reply_text(text, reply_markup=kb)
+
+
+def _beby_current():
+    """(лист, d1, d2) незакрытого периода текущего месяца."""
+    today = datetime.now(MSK).date()
+    sheet = beby_report.MONTHS[today.month - 1]
+    ws = beby_report.open_sheet(sheet)
+    d1, d2 = beby_report.current_period(ws, today)
+    return sheet, d1, d2
+
+
+async def _beby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Кнопка «Закрыть период» — дописывает блок отчёта в лист."""
+    query = update.callback_query
+    await query.answer()
+    _, _, sheet, s1, s2 = query.data.split(":")
+    d1 = datetime.strptime(s1, "%Y-%m-%d").date()
+    d2 = datetime.strptime(s2, "%Y-%m-%d").date()
+    loop = asyncio.get_event_loop()
+    try:
+        label, rows, tot, written = await loop.run_in_executor(
+            None, lambda: beby_report.close_period(sheet, d1, d2))
+    except Exception as e:
+        logger.exception("Beby close failed")
+        await query.edit_message_text(f"❌ Не смог закрыть период: {e}")
+        return
+    if not written:
+        await query.edit_message_text(f"Блок «{label}» в листе «{sheet}» уже есть — "
+                                      f"ничего не менял.")
+        return
+    nalog = tot[3] * 0.11
+    profit = tot[3] - nalog - tot[1] - 1000
+    await query.edit_message_text(
+        (f"✅ Блок «{label}» записан в лист «{sheet}».\n"
+         f"купили {tot[0]:.0f} — {tot[1]:,.0f} ₽, продали {tot[2]:.0f} — {tot[3]:,.0f} ₽\n"
+         f"прибыль {profit:,.0f} ₽\n"
+         f"Колонка «списали» пустая — впиши, если что-то испортилось; "
+         f"«на остатке» посчитан, можно поправить руками.").replace(",", " "))
 
 
 async def handle_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1253,9 +1347,14 @@ def main():
     app.add_handler(CommandHandler('zarplata', handle_zarplata))
     app.add_handler(CommandHandler('zp', handle_zarplata))
     app.add_handler(CommandHandler('chatid', handle_chatid))
+    app.add_handler(CommandHandler('beby', handle_beby))
     app.add_handler(CommandHandler('cancel_avans', handle_cancel_avans))
     app.add_handler(CallbackQueryHandler(_cash_callback, pattern=r'^cash:'))
     app.add_handler(CallbackQueryHandler(_zp_callback, pattern=r'^zp:'))
+    app.add_handler(CallbackQueryHandler(_beby_callback, pattern=r'^beby:'))
+    # PDF-накладная беби-листов — до общего обработчика: у файла нет текста,
+    # handle_message такое сообщение просто отбрасывает
+    app.add_handler(MessageHandler(filters.Document.PDF, handle_beby_invoice))
     app.add_handler(MessageHandler(
         (filters.TEXT & ~filters.COMMAND) | filters.PHOTO | filters.Document.ALL,
         handle_message,
