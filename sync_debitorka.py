@@ -33,7 +33,8 @@ except Exception:
 import openpyxl
 from sync_rhythm import (_norm, lookup, load_directory, task_name, _bitrix,
                          DEBT_SPREADSHEET, CREDENTIALS_PATH)
-from sync_odata import _fetch_odata, BASES as ODATA_BASES
+from sync_odata import (_fetch_odata, BASES as ODATA_BASES, actual_name,
+                        group_same_client)
 
 import glob
 
@@ -104,8 +105,26 @@ def read_file(path):
     return out
 
 
+def _join(m, rec):
+    """Долг второй карточки — в ту же строку."""
+    m["total"] += rec["total"]
+    m["overdue"] += rec["overdue"]
+    m["days"] = max(m["days"], rec["days"])
+    m["buckets"] = [a + b for a, b in zip(m["buckets"], rec["buckets"])]
+
+
 def combine(records):
-    """Объединяем дубли по нормализованному имени: суммы складываем, дни = макс."""
+    """Объединяем дубли: суммы складываем, дни = макс.
+
+    Два прохода. Сперва точное совпадение имени, затем карточки одного
+    контрагента, названные по-разному: клиента при переводе между базами
+    заводят заново («ПУШКИН (ООО МОНЕ)» и «… с 10.08.26 на ПЕРФИЛЬЕВ»),
+    держат отдельную карточку под наличные («ЮНОСТЬ (ООО ГРАНДЕ)» и
+    «ГРАНДЕ (ЮНОСТЬ) НАЛ ООО») или переставляют слова. Пока их считали
+    разными, долг клиента был разнесён на две строки: менеджер видел два
+    мелких вместо одного крупного, часть кусков не дотягивала до порога
+    задачи, а одна из карточек могла вообще уехать в «НЕ НАЙДЕНО».
+    """
     merged = {}
     for rec in records:
         k = _norm(rec["name"])
@@ -113,13 +132,20 @@ def combine(records):
             merged[k] = {**rec, "buckets": list(rec["buckets"])}
         else:
             m = merged[k]
-            m["total"] += rec["total"]
-            m["overdue"] += rec["overdue"]
-            m["days"] = max(m["days"], rec["days"])
-            m["buckets"] = [a + b for a, b in zip(m["buckets"], rec["buckets"])]
+            _join(m, rec)
             if len(rec["name"]) > len(m["name"]):
                 m["name"] = rec["name"]
-    return list(merged.values())
+
+    by_name = {r["name"]: r for r in merged.values()}
+    out = []
+    for members in group_same_client(by_name).values():
+        main = by_name[actual_name(members)]
+        for name in members:
+            if name != main["name"]:
+                _join(main, by_name[name])
+                print(f"  склеены карточки: {main['name']} ← {name}")
+        out.append(main)
+    return out
 
 
 def raw_manager(search, support):
