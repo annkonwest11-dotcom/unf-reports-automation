@@ -33,7 +33,8 @@ import gspread
 import requests
 import urllib3
 
-from sync_odata import name_tokens   # мягкий матч имён 1С — общий с взаиморасчётами
+# склейка карточек одного контрагента — общая с взаиморасчётами и дебиторкой
+from sync_odata import group_same_client, key_tokens as _key_tokens, same_client as _same_client
 
 try:
     from dotenv import load_dotenv
@@ -127,34 +128,6 @@ def fetch_orders(today):
 
 # ---------- склейка карточек одного клиента ----------
 
-# Родовые слова: встречаются у сотни заведений и клиента не различают. Без них
-# «ФУД КАФЕ ООО» слипалось с «ФУД СОЛЮШНС (ФИНЧ КАФЕ)» — общими были «фуд» и «кафе».
-_GENERIC_WORDS = frozenset({
-    "кафе", "бар", "ресторан", "рестораны", "кейтеринг", "кофейня", "пекарня",
-    "бистро", "паб", "клуб", "отель", "гостиница", "групп", "group", "гроуп",
-    "фуд", "food", "компания", "проект", "проекты", "торговый", "торговая", "дом",
-})
-
-
-def _key_tokens(name):
-    """Слова, по которым клиента вообще можно отличить от соседа."""
-    return name_tokens(name) - _GENERIC_WORDS
-
-
-def _same_client(t1, t2):
-    """Наборы различающих слов описывают одного контрагента.
-
-    Требуем полного совпадения. Вложенности (как в мягком матче взаиморасчётов)
-    здесь мало: лишнее слово у соседа — это чаще всего НАЗВАНИЕ ТОЧКИ, и тогда
-    склейка объединяет разные заведения сети. Проверено на живых данных:
-    «ШЕСТНАДЦАТЬ ТОНН КЕЙТЕРИНГ» ⊂ «ШЕСТНАДЦАТЬ ТОНН ПРЕСНЯ» — точки разные,
-    ритм у каждой свой. Переезды между базами при этом ловятся полностью: там
-    имя то же, отличается только хвост «с ДД.ММ.ГГ на ФАМИЛИЮ», а его срезает
-    name_tokens. Карточка без своих слов не склеивается ни с кем.
-    """
-    return bool(t1) and t1 == t2
-
-
 def merge_cards(orders, base_of):
     """Заказы с карточек-двойников — на одного клиента.
 
@@ -167,29 +140,8 @@ def merge_cards(orders, base_of):
     оставляем как есть — лучше лишняя строка, чем перепутанные клиенты.
     Имя и база берутся у карточки со свежим заказом (актуальной).
     """
-    names = list(orders)
-    toks = {n: _key_tokens(n) for n in names}
-    parent = {n: n for n in names}
-
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    for a in names:
-        hits = [b for b in names if b != a and _same_client(toks[a], toks[b])]
-        if len(hits) == 1:
-            ra, rb = find(a), find(hits[0])
-            if ra != rb:
-                parent[rb] = ra
-
-    groups = defaultdict(list)
-    for n in names:
-        groups[find(n)].append(n)
-
     merged, merged_base, cards = defaultdict(list), {}, {}
-    for members in groups.values():
+    for members in group_same_client(orders).values():
         # актуальная карточка — та, где заказывали последней
         main = max(members, key=lambda n: max(d for d, _ in orders[n]))
         for n in members:
