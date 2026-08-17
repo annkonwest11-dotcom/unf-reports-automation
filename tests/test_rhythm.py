@@ -17,6 +17,8 @@ from sync_rhythm import (
     checklist_line,
     compute,
     merge_cards,
+    plural,
+    task_name,
 )
 
 
@@ -144,6 +146,20 @@ class TestLostClients(unittest.TestCase):
     def test_boundary_exactly_lost_days(self):
         rows = self.rows_for(date(2026, 8, 17) - timedelta(days=LOST_DAYS))
         self.assertEqual(rows[0]["status"], "ОТВАЛИВАЕТСЯ")
+
+
+class TestTaskTexts(unittest.TestCase):
+    def test_transfer_mark_hidden_from_manager(self):
+        """Служебная пометка 1С в чек-листе менеджеру не нужна, юр. лицо остаётся."""
+        self.assertEqual(task_name("Under Dog (ООО АНДЕР ДОГ) с 10.08.26 на ПЕРФИЛЬЕВ"),
+                         "Under Dog (ООО АНДЕР ДОГ)")
+        self.assertEqual(task_name("ПУШКИН  (ООО МОНЕ)"), "ПУШКИН (ООО МОНЕ)")
+
+    def test_plural(self):
+        self.assertEqual(plural(21, "день", "дня", "дней"), "день")
+        self.assertEqual(plural(22, "день", "дня", "дней"), "дня")
+        self.assertEqual(plural(25, "день", "дня", "дней"), "дней")
+        self.assertEqual(plural(11, "день", "дня", "дней"), "дней")
 
 
 if __name__ == "__main__":

@@ -34,7 +34,8 @@ import requests
 import urllib3
 
 # склейка карточек одного контрагента — общая с взаиморасчётами и дебиторкой
-from sync_odata import group_same_client, key_tokens as _key_tokens, same_client as _same_client
+from sync_odata import (_TRANSFER_TAIL, group_same_client, key_tokens as _key_tokens,
+                        same_client as _same_client)
 
 try:
     from dotenv import load_dotenv
@@ -238,8 +239,22 @@ def short_name(s):
 
 def task_name(s):
     """Имя для чек-листов задач: как в 1С, ВМЕСТЕ с юр. лицом в скобках (правило
-    Анны 13.08 — менеджеры не понимали, на какое юр. лицо звонить)."""
-    return " ".join(str(s).split())
+    Анны 13.08 — менеджеры не понимали, на какое юр. лицо звонить).
+
+    Служебную пометку 1С о переводе между базами («… с 10.08.26 на ПЕРФИЛЬЕВ»)
+    убираем: менеджеру она ничего не говорит, а юр. лицо в скобках остаётся.
+    """
+    return " ".join(_TRANSFER_TAIL.sub("", str(s)).split())
+
+
+def plural(n, one, few, many):
+    """«21 день», «22 дня», «25 дней» — тексты задач читают люди."""
+    n = abs(int(n))
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
 
 
 def load_directory(gc):
@@ -438,8 +453,8 @@ def create_tasks(dist, today, lost=False):
         if lost:
             desc = (f"Клиенты перестали заказывать — связаться и выяснить причину, "
                     f"вернуть в работу.\n\n"
-                    f"В списке {len(clients)} {kind}, молчащих {LOST_DAYS} дней и дольше "
-                    f"(по данным 1С).\n"
+                    f"В списке {len(clients)} {kind}, молчащих {LOST_DAYS} "
+                    f"{plural(LOST_DAYS, 'день', 'дня', 'дней')} и дольше (по данным 1С).\n"
                     f"Формат: клиент (юр. лицо) — сколько дней молчит — дата последнего "
                     f"заказа — как часто брали раньше.")
             title = ("Вернуть клиентов — ФИРМЫ" if is_firms else "Вернуть клиентов")
