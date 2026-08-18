@@ -98,7 +98,9 @@ def parse_day(s, year):
 def read_invoices(ws, year):
     """[(дата, позиция, кол-во, сумма)] из левого блока листа."""
     out, cur = [], None
-    for row in ws.get("A1:D400"):
+    # ★UNFORMATTED_VALUE: иначе формат ячейки подменяет число — у шпината стоял
+    # процентный формат, и 10 пачек читались как 1000 (18.08)
+    for row in ws.get("A1:D400", value_render_option="UNFORMATTED_VALUE"):
         row = (row + [""] * 4)[:4]
         a, b, c, d = (str(x).strip() for x in row)
         if a and re.match(r"^\d{1,2}[.,]\d{1,2}", a):
@@ -129,7 +131,7 @@ def read_blocks(ws):
     """Блоки отчёта из правой части: [{label, top, itog, rows:{ключ: [...]}}].
 
     В rows на позицию: [куп.кол, прод.кол, куп.сумма, прод.сумма, списали, остаток]."""
-    grid = ws.get("L1:R400")
+    grid = ws.get("L1:R400", value_render_option="UNFORMATTED_VALUE")
     blocks, cur = [], None
     for i, row in enumerate(grid, 1):
         row = (list(row) + [""] * 7)[:7]
@@ -137,7 +139,8 @@ def read_blocks(ws):
         if not head and not any(str(c).strip() for c in row):
             continue
         if head and not any(str(c).strip() for c in row[1:]):     # заголовок блока
-            cur = {"label": head, "top": i, "itog": None, "rows": {}}
+            cur = {"label": head, "top": i, "itog": None, "rows": {}, "rownos": {},
+                   "start_row": None}
             blocks.append(cur)
             continue
         if cur is None or head in ("", "купили"):
@@ -147,8 +150,12 @@ def read_blocks(ws):
             continue
         if head.startswith(("Недо", "Выруч", "Заработ", "Минус", "Прибыль", "Рентаб")):
             continue
+        if head.startswith("было на начало"):
+            cur["start_row"] = i
+            continue
         k, _ = canon_pos(head)
         cur["rows"][k] = [_num(x) for x in row[1:7]]
+        cur["rownos"][k] = i
     return blocks
 
 
@@ -218,7 +225,7 @@ def build(sheet, d1, d2, shift=1):
     return rep, titles, sorted(set(used)), ws
 
 
-def write_block(ws, label, rows, logistics=1000):
+def write_block(ws, label, rows, logistics=1000, start_qty=0):
     """Дописывает блок отчёта в правую часть листа (L:R), как это делает Анна вручную.
 
     rows: [(имя, куп.кол, куп.сумма, прод.кол, прод.сумма, остаток)] в нужном порядке.
@@ -238,13 +245,19 @@ def write_block(ws, label, rows, logistics=1000):
     grid.append(["итог:"] + [f"=SUM({c}{first}:{c}{lastpos})" for c in "MNOP"] +
                 [f"=SUM({c}{first}:{c}{lastpos})" for c in "QR"])
     t = lastpos + 1                                  # строка «итог:»
+    grid.append(["было на начало:", start_qty, "пачек", "", "", "", ""])
     grid.append([])
-    grid.append(["Недопродали/списали:", f"=M{t}-N{t}-Q{t}-R{t}", "пачки", "", "", "", ""])
+    # ★18.08 (решение Анны «вести остатки честно»): баланс склада, а не «купили −
+    # продали». Прежняя формула не знала про переходящий запас и уходила в минус
+    # ровно на его величину. В норме здесь 0; число появляется, если товар пропал
+    # мимо списаний или остаток поправили руками после пересчёта.
+    grid.append(["Расхождение (проверка):",
+                 f"=M{t + 1}+M{t}-N{t}-Q{t}-R{t}", "пачки", "", "", "", ""])
     grid.append([])
     grid.append(["Выручка (оборот)", f"=P{t}", "", "", "", "", ""])
     grid.append(["Минус налоги 11%", f"=P{t}*0,11", "", "", "", "", ""])
     grid.append(["Минус логистика", logistics, "", "", "", "", ""])
-    v = t + 4                                        # строка «Выручка»
+    v = t + 5                                        # строка «Выручка» (ниже «было на начало»)
     grid.append(["Прибыль:", f"=M{v}-M{v + 1}-M{v + 2}-O{t}", "", "", "", "", ""])
     grid.append(["Рентабельность", f"=M{v + 3}/M{v}", "", "", "", "", ""])
     ws.spreadsheet.values_batch_update({"value_input_option": "USER_ENTERED", "data": [
@@ -292,7 +305,7 @@ def insert_invoice(ws, inv, year=None):
 
     Возвращает (первая строка, строка ИТОГО) или None, если накладная этой даты уже есть."""
     year = year or inv["date"].year
-    rows_raw = ws.get("A1:D400")
+    rows_raw = ws.get("A1:D400", value_render_option="UNFORMATTED_VALUE")
     dates = {}                                   # дата → строка, где она стоит
     for i, row in enumerate(rows_raw, 1):
         a = str((row or [""])[0]).strip()
@@ -360,6 +373,176 @@ def period_rows(ws, d1, d2, shift=1):
     return rows, tot
 
 
+KNOWN_KEYS = frozenset(v[0] for _, v in RULES)
+
+
+def match_position(name):
+    """(ключ, имя) для названия позиции, где бы оно ни стояло во фразе.
+
+    canon_pos читает строку с начала, а Анна пишет с обрамлением («писали мизуна
+    зеленая», «19 микса списали»), поэтому пробуем срезы: сперва всю фразу, потом
+    начиная со второго слова и так далее. Не нашли — возвращаем None, и списание
+    уходит в «не понял», а не в случайную позицию.
+    """
+    words = str(name or "").split()
+    for i in range(len(words)):
+        key, title = canon_pos(" ".join(words[i:]))
+        if key in KNOWN_KEYS:
+            return key, title
+    return None
+
+
+def parse_writeoffs(text, today=None):
+    """Свободный текст про списания → ([(дата, ключ, имя, пачек)], непонятое).
+
+    Анна пишет как говорит: «мизуна зеленая 5 сегодня, микс салат 1, пакчой зел 2
+    вчера списали», «16 числа 19 микса списали», «Микс 23 за 11 число»,
+    «Пакчой красный 2 от 11 числа». Дата может стоять и до, и после позиции;
+    если её нет — берём дату предыдущего куска (она пишет их подряд одним днём),
+    а для самого первого — сегодня.
+
+    Число рядом со словом «число/числа» — это ДЕНЬ, а не количество: в «16 числа
+    19 микса» списано 19 пачек 16-го, а не наоборот.
+    """
+    today = today or date.today()
+    out, unknown, last_day = [], [], None
+    for chunk in re.split(r"[,;\n]+|(?<=\d)\s+и\s+", str(text or "")):
+        s = " ".join(chunk.split())
+        if not s:
+            continue
+        day = None
+        low = s.lower().replace("ё", "е")
+        if "позавчера" in low:
+            day = today - timedelta(days=2)
+        elif "вчера" in low:
+            day = today - timedelta(days=1)
+        elif "сегодня" in low:
+            day = today
+        s = re.sub(r"(?i)\b(поза)?вчера\b|\bсегодня\b", " ", s)
+
+        m = re.search(r"(?i)(?:за|от|)\s*(\d{1,2})\s*числ[аоеу]?", s)
+        if m:
+            day = _day_in_month(int(m.group(1)), today)
+            s = s[:m.start()] + " " + s[m.end():]
+        else:
+            m = re.search(r"\b(\d{1,2})[.\-](\d{1,2})(?:[.\-](\d{2,4}))?\b", s)
+            if m:
+                year = today.year
+                if m.group(3):
+                    year = int(m.group(3)) + (2000 if len(m.group(3)) == 2 else 0)
+                day = date(year, int(m.group(2)), int(m.group(1)))
+                s = s[:m.start()] + " " + s[m.end():]
+
+        nums = re.findall(r"\d+(?:[.,]\d+)?", s)
+        if not nums:
+            continue
+        qty = float(nums[-1].replace(",", "."))
+        name = " ".join(re.sub(r"\d+(?:[.,]\d+)?", " ", s).split())
+        name = re.sub(r"(?i)\b(списал[аи]?|списание|списать|шт|штук|пачек|пачки|пачка)\b",
+                      " ", name)
+        name = " ".join(name.split()).strip(" -—:")
+        if not name:
+            continue
+        hit = match_position(name)
+        day = day or last_day or today
+        last_day = day
+        if hit is None:
+            unknown.append((day, name, qty))
+            continue
+        out.append((day, hit[0], hit[1], qty))
+    return out, unknown
+
+
+def _day_in_month(day, today):
+    """«16 числа» → дата: этот месяц, а если день ещё не наступил — прошлый."""
+    if day <= today.day:
+        return today.replace(day=day)
+    prev_end = today.replace(day=1) - timedelta(days=1)
+    return prev_end.replace(day=min(day, prev_end.day))
+
+
+def block_for_day(ws, day):
+    """Блок отчёта, в период которого попадает дата (или None)."""
+    for b in read_blocks(ws):
+        end = label_end(b["label"], day.year, day.month)
+        start = block_start(b["label"], day.year, day.month)
+        if start and end and start <= day <= end:
+            return b
+    return None
+
+
+def block_start(label, year, month):
+    """Первый день периода из заголовка блока («11-18 августа» → 11.08)."""
+    m = re.match(r"\s*(\d{1,2})\s*[-–]\s*(\d{1,2})\s+(\S+)", label)
+    if not m:
+        return None
+    mon = next((i + 1 for i, name in enumerate(MONTHS_GEN)
+                if m.group(3).lower().startswith(name[:4])), month)
+    try:
+        return date(year, mon, int(m.group(1)))
+    except ValueError:
+        return None
+
+
+def remains_before(ws, block):
+    """Остатки на начало блока = остатки конца предыдущего блока с позициями."""
+    blocks = [b for b in read_blocks(ws) if b["rows"]]
+    prev = None
+    for b in blocks:
+        if b["top"] == block["top"]:
+            break
+        prev = b
+    if prev is None:
+        return {}
+    return {k: (v[5] if v[5] else max(v[0] - v[1] - v[4], 0))
+            for k, v in prev["rows"].items()}
+
+
+def apply_writeoffs(sheet, items):
+    """Вносит списания в колонку «списали» нужных блоков и пересчитывает остаток.
+
+    items: [(дата, ключ, имя, пачек)] из parse_writeoffs. Списание кладём в блок,
+    в период которого попадает дата. Остаток пересчитываем как
+    «было на начало + купили − продали − списали», не ниже нуля.
+    Возвращает (применённое, проблемы).
+    """
+    ws = open_sheet(sheet)
+    by_block = defaultdict(list)
+    problems = []
+    for day, key, title, qty in items:
+        block = block_for_day(ws, day)
+        if block is None:
+            problems.append(
+                f"{title} {qty:g} от {day:%d.%m} — нет закрытого периода с этой датой")
+            continue
+        by_block[block["top"]].append((day, key, title, qty))
+
+    applied, updates = [], []
+    for b in read_blocks(ws):
+        chunk = by_block.get(b["top"])
+        if not chunk:
+            continue
+        prev = remains_before(ws, b)
+        for day, key, title, qty in chunk:
+            rowno = b["rownos"].get(key)
+            if rowno is None:
+                problems.append(
+                    f"{title} {qty:g} от {day:%d.%m} — позиции нет в блоке «{b['label']}»")
+                continue
+            kq, sq, _ks, _ss, spis, _rest = b["rows"][key]
+            spis += qty
+            rest = max(prev.get(key, 0) + kq - sq - spis, 0)
+            b["rows"][key][4] = spis
+            b["rows"][key][5] = rest
+            updates.append({"range": f"'{ws.title}'!Q{rowno}:R{rowno}",
+                            "values": [[spis, rest]]})
+            applied.append((b["label"], day, title, qty, rest))
+    if updates:
+        ws.spreadsheet.values_batch_update(
+            {"value_input_option": "USER_ENTERED", "data": updates})
+    return applied, problems
+
+
 def close_period(sheet, d1, d2, label=None, logistics=1000, shift=1):
     """Считает период и дописывает блок в лист. Возвращает (label, rows, tot)."""
     ws = open_sheet(sheet)
@@ -367,7 +550,7 @@ def close_period(sheet, d1, d2, label=None, logistics=1000, shift=1):
     label = label or f"{d1:%d}-{d2:%d} {MONTHS_GEN[d2.month - 1]}"
     if any(b["label"] == label for b in read_blocks(ws)):
         return label, rows, tot, False           # блок уже есть — не дублируем
-    write_block(ws, label, rows, logistics)
+    write_block(ws, label, rows, logistics, start_qty=sum(last_remains(ws).values()))
     return label, rows, tot, True
 
 
