@@ -467,9 +467,25 @@ async def handle_beby_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
     """PDF накладной от Анны в личке: внести в таблицу и показать текущий период."""
     message = update.effective_message
     doc = message.document if message else None
-    if not doc or not (doc.file_name or "").lower().endswith(".pdf"):
+    chat = update.effective_chat
+    user = update.effective_user
+    logger.info("Beby: документ %r (mime %s) от %s в чате %s (%s)",
+                getattr(doc, "file_name", None), getattr(doc, "mime_type", None),
+                getattr(user, "id", None), getattr(chat, "id", None),
+                getattr(chat, "type", None))
+    if not doc:
         return
-    if not _is_from_anna(update) or update.effective_chat.type != "private":
+    name = (doc.file_name or "").lower()
+    if not (name.endswith(".pdf") or doc.mime_type == "application/pdf"):
+        logger.info("Beby: пропускаю, не PDF (%s)", name or doc.mime_type)
+        return
+    if not _is_from_anna(update):
+        logger.info("Beby: пропускаю, отправитель %s не Анна (%s)",
+                    getattr(user, "id", None), ANNA_USER_ID)
+        return
+    if chat.type != "private":
+        await message.reply_text(
+            "📄 Накладную по беби пришлите мне в личку — здесь я её не разбираю.")
         return
 
     await message.reply_text("📄 Разбираю накладную…")
@@ -1359,7 +1375,11 @@ def main():
     app.add_handler(CallbackQueryHandler(_beby_callback, pattern=r'^beby:'))
     # PDF-накладная беби-листов — до общего обработчика: у файла нет текста,
     # handle_message такое сообщение просто отбрасывает
-    app.add_handler(MessageHandler(filters.Document.PDF, handle_beby_invoice))
+    # ★и по mime, и по расширению: у пересланного файла mime часто
+    # application/octet-stream, и фильтр по одному mime его пропускал
+    app.add_handler(MessageHandler(
+        filters.Document.PDF | filters.Document.FileExtension('pdf'),
+        handle_beby_invoice))
     app.add_handler(MessageHandler(
         (filters.TEXT & ~filters.COMMAND) | filters.PHOTO | filters.Document.ALL,
         handle_message,
