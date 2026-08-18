@@ -148,7 +148,8 @@ def read_blocks(ws):
         if head == "итог:":
             cur["itog"] = i
             continue
-        if head.startswith(("Недо", "Выруч", "Заработ", "Минус", "Прибыль", "Рентаб")):
+        if head.startswith(("Недо", "Расхожд", "Выруч", "Заработ", "Минус",
+                            "Прибыль", "Рентаб")):
             continue
         if head.startswith("было на начало"):
             cur["start_row"] = i
