@@ -5,3 +5,9 @@ python-dotenv==1.0.1
 selenium>=4.0.0
 webdriver-manager>=3.8.0
 beautifulsoup4>=4.11.0
+# ★18.08: бот падал на разборе накладной беби — pypdf стоял только в системном
+# python, а сервис живёт в venv. Ставим всё, что реально импортирует код.
+pypdf>=6.0
+openpyxl>=3.1
+requests>=2.31
+urllib3>=2.0
