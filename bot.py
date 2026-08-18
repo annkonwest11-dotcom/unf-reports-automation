@@ -20,6 +20,7 @@ import watch_otvetstvennye
 import zp_text
 from sync_avansy import sync_avansy, format_report as _format_avansy, _open_summary_ws
 import cash_avans
+import beby_invoice
 import beby_report
 
 load_dotenv()
@@ -479,6 +480,10 @@ async def handle_beby_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
         loop = asyncio.get_event_loop()
         text, period = await loop.run_in_executor(
             None, lambda: beby_report.process_invoice(tmp))
+    except beby_invoice.NotAnInvoice as e:
+        # Юшин шлёт и счета на оплату — их в отчёт не берём (правило Анны 18.08)
+        await message.reply_text(f"↩️ Пропустил: {e}.")
+        return
     except Exception as e:
         logger.exception("Beby invoice failed")
         await message.reply_text(f"❌ Не смог разобрать накладную: {e}")
