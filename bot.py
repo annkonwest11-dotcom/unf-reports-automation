@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import tempfile
+import uuid
 from datetime import time as dtime, timezone, timedelta, datetime
 
 from dotenv import load_dotenv
@@ -467,9 +468,25 @@ async def handle_beby_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
     """PDF накладной от Анны в личке: внести в таблицу и показать текущий период."""
     message = update.effective_message
     doc = message.document if message else None
-    if not doc or not (doc.file_name or "").lower().endswith(".pdf"):
+    chat = update.effective_chat
+    user = update.effective_user
+    logger.info("Beby: документ %r (mime %s) от %s в чате %s (%s)",
+                getattr(doc, "file_name", None), getattr(doc, "mime_type", None),
+                getattr(user, "id", None), getattr(chat, "id", None),
+                getattr(chat, "type", None))
+    if not doc:
         return
-    if not _is_from_anna(update) or update.effective_chat.type != "private":
+    name = (doc.file_name or "").lower()
+    if not (name.endswith(".pdf") or doc.mime_type == "application/pdf"):
+        logger.info("Beby: пропускаю, не PDF (%s)", name or doc.mime_type)
+        return
+    if not _is_from_anna(update):
+        logger.info("Beby: пропускаю, отправитель %s не Анна (%s)",
+                    getattr(user, "id", None), ANNA_USER_ID)
+        return
+    if chat.type != "private":
+        await message.reply_text(
+            "📄 Накладную по беби пришлите мне в личку — здесь я её не разбираю.")
         return
 
     await message.reply_text("📄 Разбираю накладную…")
@@ -519,6 +536,45 @@ async def handle_beby(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text(text, reply_markup=kb)
 
 
+async def handle_beby_writeoff(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Списания беби-листов сообщением: «мизуна зеленая 5 сегодня, микс 1…».
+
+    Сразу не пишем: показываем, что поняли, и ждём подтверждения кнопкой —
+    текст свободный, ошибиться легко, а списание меняет остатки.
+    """
+    if not _is_from_anna(update) or update.effective_chat.type != "private":
+        return
+    text = (update.effective_message.text or "")
+    loop = asyncio.get_event_loop()
+    today = datetime.now(MSK).date()
+    try:
+        items, unknown = await loop.run_in_executor(
+            None, lambda: beby_report.parse_writeoffs(text, today))
+    except Exception as e:
+        logger.exception("Beby writeoff parse failed")
+        await update.message.reply_text(f"❌ Не смог разобрать списания: {e}")
+        return
+    if not items and not unknown:
+        return                                   # не про списания — молчим
+
+    lines = ["📝 Списания, как я понял:"]
+    lines += [f"   {d:%d.%m}  {name} — {q:g} пачек" for d, _k, name, q in items]
+    if unknown:
+        lines.append("")
+        lines.append("Не понял, что за позиция (не внесу):")
+        lines += [f"   {d:%d.%m}  «{name}» — {q:g}" for d, name, q in unknown]
+    kb = None
+    if items:
+        token = str(uuid.uuid4())[:8]
+        context.bot_data.setdefault("beby_writeoffs", {})[token] = items
+        lines.append("")
+        lines.append("Вносить?")
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("Внести", callback_data=f"beby:wo:{token}"),
+            InlineKeyboardButton("Отмена", callback_data="beby:wocancel")]])
+    await update.message.reply_text("\n".join(lines), reply_markup=kb)
+
+
 def _beby_current():
     """(лист, d1, d2) незакрытого периода текущего месяца."""
     today = datetime.now(MSK).date()
@@ -529,9 +585,40 @@ def _beby_current():
 
 
 async def _beby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Кнопка «Закрыть период» — дописывает блок отчёта в лист."""
+    """Кнопки беби: «Закрыть период» и подтверждение списаний."""
     query = update.callback_query
     await query.answer()
+    loop = asyncio.get_event_loop()
+
+    if query.data == "beby:wocancel":
+        await query.edit_message_text("Отменил, ничего не вносил.")
+        return
+
+    if query.data.startswith("beby:wo:"):
+        token = query.data.split(":")[2]
+        items = (context.bot_data.get("beby_writeoffs") or {}).pop(token, None)
+        if not items:
+            await query.edit_message_text(
+                "Не нашёл эти списания (бот перезапускался) — пришлите текст ещё раз.")
+            return
+        sheet = beby_report.MONTHS[datetime.now(MSK).date().month - 1]
+        try:
+            applied, problems = await loop.run_in_executor(
+                None, lambda: beby_report.apply_writeoffs(sheet, items))
+        except Exception as e:
+            logger.exception("Beby writeoff apply failed")
+            await query.edit_message_text(f"❌ Не смог внести списания: {e}")
+            return
+        lines = [f"✅ Внёс списаний: {len(applied)}"] if applied else ["Ничего не внёс."]
+        lines += [f"   {label}: {name} −{q:g} → на остатке {rest:g}"
+                  for label, _d, name, q, rest in applied]
+        if problems:
+            lines.append("")
+            lines.append("Не вышло:")
+            lines += [f"   {p}" for p in problems]
+        await query.edit_message_text("\n".join(lines))
+        return
+
     _, _, sheet, s1, s2 = query.data.split(":")
     d1 = datetime.strptime(s1, "%Y-%m-%d").date()
     d2 = datetime.strptime(s2, "%Y-%m-%d").date()
@@ -1359,7 +1446,17 @@ def main():
     app.add_handler(CallbackQueryHandler(_beby_callback, pattern=r'^beby:'))
     # PDF-накладная беби-листов — до общего обработчика: у файла нет текста,
     # handle_message такое сообщение просто отбрасывает
-    app.add_handler(MessageHandler(filters.Document.PDF, handle_beby_invoice))
+    # ★и по mime, и по расширению: у пересланного файла mime часто
+    # application/octet-stream, и фильтр по одному mime его пропускал
+    app.add_handler(MessageHandler(
+        filters.Document.PDF | filters.Document.FileExtension('pdf'),
+        handle_beby_invoice))
+    # списания беби-листов текстом («мизуна зеленая 5 сегодня, микс 1») — до
+    # общего обработчика, но только в личке Анны и только со словом «списа…»
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE
+        & filters.Regex(r'(?i)списа'),
+        handle_beby_writeoff))
     app.add_handler(MessageHandler(
         (filters.TEXT & ~filters.COMMAND) | filters.PHOTO | filters.Document.ALL,
         handle_message,
