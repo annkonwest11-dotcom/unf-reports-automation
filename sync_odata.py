@@ -557,18 +557,18 @@ def sync_oborot(dry_run=False, today=None):
 
 def oborot_report(today=None):
     """Ежедневный отчёт РОП: пишет оборот (E88, из 1С Продажи) и поступления
-    (E92, из ADesk), возвращает суммы, %плана (новые/оборот/поступления) и ссылку.
-    Поступления недоступны (нет токена / ошибка ADesk) — не срывают оборот."""
+    (E92, из кассы), возвращает суммы, %плана (новые/оборот/поступления) и ссылку.
+    Поступления недоступны (нет токена / ошибка кассы) — не срывают оборот."""
     ss = _open_spreadsheet()
     info = resolve_mode(ss, today)
     md = info["month_date"]
     total = round(sum(fetch_oborot(cfg["id"], md) for cfg in BASES.values()), 2)
     postup = None
     try:
-        from sync_adesk import fetch_postupleniya, POSTUP_CELL
+        from sync_kassa import fetch_postupleniya, POSTUP_CELL
         postup = fetch_postupleniya(md)
     except Exception:
-        logger.exception("ADesk поступления недоступны — пишу только оборот")
+        logger.exception("Поступления из кассы недоступны — пишу только оборот")
 
     sv = ss.worksheet(SUMMARY_SHEET)
     frozen = info["mode"] == "overlap"

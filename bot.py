@@ -420,7 +420,7 @@ async def _cash_finish(context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_avans(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/avans — если наличные уже подтверждены за этот месяц, просто прислать итог;
-    иначе заполнить официальные авансы (C) из ADesk и запустить диалог наличных."""
+    иначе заполнить официальные авансы (C) из кассы и запустить диалог наличных."""
     if not _is_from_anna(update):
         await update.message.reply_text("⛔ Эта команда только для Анны")
         return
@@ -432,7 +432,7 @@ async def handle_avans(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if _is_avans_confirmed():
         await _send_avans_summary(context, update.effective_chat.id)
         return
-    await update.message.reply_text("🔄 Заполняю официальные авансы из ADesk...")
+    await update.message.reply_text("🔄 Заполняю официальные авансы из кассы...")
     try:
         import asyncio
         loop = asyncio.get_event_loop()
@@ -868,7 +868,7 @@ async def auto_zp_monthly(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_avansy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Заполнить выплаты официальным сотрудникам из ADesk (аванс/зарплата).
+    """Заполнить выплаты официальным сотрудникам из кассы (аванс/зарплата).
 
     /avansy         — по текущему числу (23-29 → аванс, 1-12 → зарплата)
     /avansy avans   — принудительно аванс (колонка C)
@@ -887,7 +887,7 @@ async def handle_avansy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         day = datetime.now(MSK).day
         kind = "avans" if 20 <= day <= 31 else "zp"
 
-    await update.message.reply_text("🔄 Тяну выплаты из ADesk...")
+    await update.message.reply_text("🔄 Тяну выплаты из кассы...")
     try:
         import asyncio
         loop = asyncio.get_event_loop()
@@ -899,7 +899,7 @@ async def handle_avansy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def auto_avansy(context: ContextTypes.DEFAULT_TYPE):
-    """В дни выплат опрашивает ADesk (каждый час 10-15 МСК, см. расписание) и
+    """В дни выплат опрашивает кассу (каждый час 10-15 МСК, см. расписание) и
     заполняет таблицу выплат СВОДНАЯ_ЗП, как только выплата появится.
     24-25 число → аванс (колонка C), 9-10 → зарплата (колонка E), иначе тихо выходим.
     Пишет и уведомляет Анну ТОЛЬКО по появившимся/изменившимся суммам (не спамит
@@ -1288,14 +1288,14 @@ async def auto_oborot(context: ContextTypes.DEFAULT_TYPE):
                     "Оборот/поступления расчётного месяца в СВОДНОЙ не тронуты.\n\n"
                     "📎 Справочно, текущий календарный месяц:\n"
                     f"  💰 Оборот (Продажи): {oborot} ₽\n"
-                    f"  💳 Поступления (ADesk): {postup} ₽\n\n"
+                    f"  💳 Поступления (касса): {postup} ₽\n\n"
                     "Запишутся в СВОДНУЮ после закрытия месяца."
                 )
             else:
                 text = (
-                    "📊 РОП обновлён (1С + ADesk)\n"
+                    "📊 РОП обновлён (1С + касса)\n"
                     f"💰 Оборот (Продажи): {oborot} ₽\n"
-                    f"💳 Поступления (ADesk): {postup} ₽\n\n"
+                    f"💳 Поступления (касса): {postup} ₽\n\n"
                     "📈 % выполнения плана (РОП):\n"
                     f"  • Новые продажи: {rep['pct_new']}\n"
                     f"  • Оборот: {rep['pct_oborot']}\n"

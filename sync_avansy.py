@@ -1,13 +1,16 @@
-"""Авто-заполнение выплат официально устроенным сотрудникам из ADesk →
+"""Авто-заполнение выплат официально устроенным сотрудникам из «Кассы GREENCH» →
 таблица выплат листа СВОДНАЯ_ЗП.
 
-Официально устроены (выплаты на карту, фиксируются в ADesk «Операции», категория
+Официально устроены (выплаты на карту, фиксируются в кассе «Операции», категория
 обычно «Зарплата Офис», описание «Заработная плата за … половину месяца»):
     Дарья Вольнова, Ксения Наныкина, Алёна Черкашина, Владислава Герасимчук.
 
 Две выплаты в месяц:
   • «первую половину месяца»  → АВАНС  (23-25, иногда 29) → колонка C «Аванс 24 — на карту (офиц.)»
   • «вторую половину месяца»  → ЗП     (08-10)            → колонка E «ЗП 9 — на карту (офиц.)»
+
+Источник до 28.08.2026 — ADesk, потом касса (ADesk закрыл API). Формат операций
+одинаковый: за это отвечает kassa_api.month_operations.
 
 Даты плавают, поэтому тип выплаты определяем по ОПИСАНИЮ операции, а не по числу.
 Матч сотрудника — по фамилии в поле contractor (уникальна среди офисных).
@@ -24,7 +27,7 @@ import math
 import os
 from datetime import datetime
 
-import requests
+import kassa_api
 
 try:
     from dotenv import load_dotenv
@@ -34,7 +37,6 @@ except Exception:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-ADESK_URL = "https://api.adesk.ru/v1/transactions"
 _TYPE_EXPENSE = 2  # 2 = расход/выплата
 
 # фамилия-ключ (в contractor) → (строка в СВОДНАЯ_ЗП, отображаемое имя)
@@ -64,7 +66,7 @@ def _contractor_name(t):
 
 
 def _kind_of(description):
-    """Определить тип зарплатной выплаты по описанию ADesk.
+    """Определить тип зарплатной выплаты по описанию операции.
     Возвращает 'avans' / 'zp' / None (если это не зарплатная половина)."""
     d = (description or "").lower()
     if "половин" not in d:
@@ -86,7 +88,7 @@ def _match_surname(name):
 def fetch_payouts(kind, today=None, token=None, ym=None):
     """Суммы выплат нужного типа (kind) по 4 официальным за месяц ym (YYYY-MM).
 
-    ym — месяц ДАТЫ операций ADesk. Если не задан, берётся календарный месяц из
+    ym — месяц ДАТЫ операций кассы. Если не задан, берётся календарный месяц из
     today/now (обратная совместимость). Осмысленный ym передаёт sync_avansy: под
     расчётный период (аванс — сам месяц, ЗП — следующий, т.к. её платят 9-10 числа
     следующего месяца) — чтобы выплата попадала в свою ведомость независимо от даты
@@ -98,21 +100,10 @@ def fetch_payouts(kind, today=None, token=None, ym=None):
     """
     if kind not in KIND_COL:
         raise ValueError(f"kind должен быть avans|zp, а не {kind!r}")
-    token = token or os.environ.get("ADESK_TOKEN")
-    if not token:
-        raise RuntimeError("ADESK_TOKEN не задан в окружении")
     ym = ym or (today or datetime.now()).strftime("%Y-%m")
 
-    resp = requests.get(ADESK_URL,
-                        params={"api_token": token, "length": 1000000},
-                        timeout=120)
-    resp.raise_for_status()
-    data = resp.json()
-    if not data.get("success", True):
-        raise RuntimeError(f"ADesk API: {data}")
-
     result = {}
-    for t in data.get("transactions", []):
+    for t in kassa_api.month_operations(ym, token=token):
         if t.get("type") != _TYPE_EXPENSE:
             continue
         di = t.get("dateIso") or ""
@@ -137,12 +128,12 @@ def fetch_payouts(kind, today=None, token=None, ym=None):
                                "row": row, "date": ddmm, "_di": di, "count": 1}
     for v in result.values():
         v.pop("_di", None)
-    logger.info("ADesk выплаты (%s) за %s: %d сотрудников", kind, ym, len(result))
+    logger.info("Касса, выплаты (%s) за %s: %d сотрудников", kind, ym, len(result))
     return result
 
 
 def _ym_for_period(spreadsheet, kind, today=None):
-    """Месяц (YYYY-MM) операций ADesk, соответствующий РАСЧЁТНОМУ периоду
+    """Месяц (YYYY-MM) операций кассы, соответствующий РАСЧЁТНОМУ периоду
     (НАСТРОЙКИ!B4): аванс («первую половину») платят в самом расчётном месяце;
     ЗП («вторую половину») — 9-10 числа СЛЕДУЮЩЕГО месяца. Так авансы читают
     операции того месяца, что сейчас в работе, а не календарного — выплата не
@@ -190,7 +181,7 @@ def _read_current(ws, col):
 
 def sync_avansy(kind, today=None, apply=True, token=None, ws=None,
                 only_changed=False):
-    """Тянет выплаты из ADesk и (при apply) пишет в СВОДНАЯ_ЗП.
+    """Тянет выплаты из кассы и (при apply) пишет в СВОДНАЯ_ЗП.
 
     only_changed=True — сравнивает с тем, что уже стоит в ячейке, и пишет/
     отмечает changed ТОЛЬКО отличающиеся суммы (для частого опроса без спама).
