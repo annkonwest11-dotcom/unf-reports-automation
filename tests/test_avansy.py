@@ -1,4 +1,8 @@
-"""Тесты логики sync_avansy — без сети (fetch подменяется фейковыми операциями)."""
+"""Тесты логики sync_avansy — без сети (источник операций подменяется фейковым).
+
+Операции приходят из kassa_api.month_operations уже в форме ADesk
+(type/amount/dateIso/description/contractor.name), её и подменяем.
+"""
 import os
 import sys
 import unittest
@@ -11,17 +15,6 @@ import sync_avansy as sa
 def _tx(name, amount, dateIso, desc, ttype=2):
     return {"type": ttype, "amount": amount, "dateIso": dateIso,
             "description": desc, "contractor": {"name": name}}
-
-
-class FakeResp:
-    def __init__(self, payload):
-        self._p = payload
-
-    def raise_for_status(self):
-        pass
-
-    def json(self):
-        return self._p
 
 
 class TestKindDetection(unittest.TestCase):
@@ -55,13 +48,13 @@ class TestSurnameMatch(unittest.TestCase):
 
 class TestFetchAndSync(unittest.TestCase):
     def setUp(self):
-        self._orig_get = sa.requests.get
+        self._orig_ops = sa.kassa_api.month_operations
 
     def tearDown(self):
-        sa.requests.get = self._orig_get
+        sa.kassa_api.month_operations = self._orig_ops
 
     def _install(self, txs):
-        sa.requests.get = lambda *a, **k: FakeResp({"success": True, "transactions": txs})
+        sa.kassa_api.month_operations = lambda ym, token=None: txs
 
     def test_avans_picks_first_half_only(self):
         self._install([
@@ -133,13 +126,13 @@ class FakeWS:
 
 class TestOnlyChanged(unittest.TestCase):
     def setUp(self):
-        self._orig_get = sa.requests.get
+        self._orig_ops = sa.kassa_api.month_operations
 
     def tearDown(self):
-        sa.requests.get = self._orig_get
+        sa.kassa_api.month_operations = self._orig_ops
 
     def _install(self, txs):
-        sa.requests.get = lambda *a, **k: FakeResp({"success": True, "transactions": txs})
+        sa.kassa_api.month_operations = lambda ym, token=None: txs
 
     def test_skips_already_written_writes_only_new(self):
         import datetime as _dt
