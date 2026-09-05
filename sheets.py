@@ -190,7 +190,13 @@ class SheetsClient:
         name: str,
         allowed_rows: set[int],
     ) -> int | None:
-        name_words = [w for w in name.lower().split() if len(w) > 2]
+        # ё=е: в таблице «Алена», человек пишет «Алёна» — это одно имя.
+        # Порядок слов не важен (сравниваем множества): «Караханова Виолетта»
+        # находит строку «Виолетта Караханова» — так пишут и так, и так.
+        def _norm_words(text):
+            return [w for w in text.lower().replace("ё", "е").split() if len(w) > 2]
+
+        name_words = _norm_words(name)
         if not name_words:
             return None
 
@@ -199,7 +205,7 @@ class SheetsClient:
             row = all_rows[row_num - 1]
             if len(row) < 2 or not row[1]:
                 continue
-            cell_words = set(row[1].lower().split())
+            cell_words = set(_norm_words(row[1]))
             score = sum(1 for w in name_words if w in cell_words)
             if score == 0:
                 continue

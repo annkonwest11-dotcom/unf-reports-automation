@@ -117,9 +117,16 @@ def _save_employees(data: dict):
 
 
 def _name_matches(registered: str, reported: str) -> bool:
-    """True if at least one significant word from registered name is in reported name."""
-    words = [w for w in registered.lower().split() if len(w) > 3 and w.isalpha()]
-    rep = reported.lower()
+    """True, если хотя бы одно значимое слово имени совпало.
+
+    Порядок слов не важен, регистр тоже, ё считается за е: «Караханова Виолетта»
+    и «Виолетта Караханова» — один человек, «Алёна» и «Алена» тоже.
+    """
+    def norm(t):
+        return t.lower().replace("ё", "е")
+
+    words = [w for w in norm(registered).split() if len(w) > 3 and w.isalpha()]
+    rep = norm(reported)
     return any(w in rep for w in words)
 
 

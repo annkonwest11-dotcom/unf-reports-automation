@@ -22,7 +22,7 @@ from datetime import datetime
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
-from sync_odata import (BASES, ALIASES, DATA_START_ROW, _contractor_names, _fetch_odata,
+from sync_odata import (BASES, SHEET_BASES, ALIASES, DATA_START_ROW, _contractor_names, _fetch_odata,
                         _open_spreadsheet, _parse_settings_period, aggregate_balances,
                         build_token_index, norm_name, soft_lookup)
 from zp_text import MONTHS, Sheet, big, num

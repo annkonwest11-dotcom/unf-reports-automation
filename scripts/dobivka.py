@@ -34,8 +34,9 @@ import sync_rhythm as sr
 
 logger = logging.getLogger(__name__)
 
-# таблица «Потери / обрезания / перекуп» — там же, где Анна вела лист руками
-SPREADSHEET = os.environ.get("DOBIVKA_SSID", "1MTu7whYO05u7PmBdYGjzmgJ62CkpdX7aDW1mGWRL1SM")
+# Отдельная таблица «Добивка 2.0» (выбор Анны 05.09.2026). Раньше лист жил в
+# таблице обрезаний, где Анна вела его руками — та копия осталась как история.
+SPREADSHEET = os.environ.get("DOBIVKA_SSID", "1s8U7v8NtrZpOb8pMggGAvp0LWFftOotV_ngK3rBUDrY")
 SHEET = "добивка"
 HEADER = ["Клиент", "Кол-во дней", "Комменатрий", "Менеджер", "Обычно раз в, дн.",
           "Заказов за период", "Последний заказ", "База"]
@@ -90,11 +91,25 @@ def build(today=None):
     return out, cards
 
 
+def _sheet(ss):
+    """Лист «добивка»: находим, а если его нет — заводим (или переименовываем
+    единственный пустой лист, который Google создаёт в новой таблице)."""
+    try:
+        return ss.worksheet(SHEET)
+    except gspread.WorksheetNotFound:
+        pass
+    sheets = ss.worksheets()
+    if len(sheets) == 1 and not any(any(c.strip() for c in r) for r in sheets[0].get_all_values()):
+        sheets[0].update_title(SHEET)
+        return sheets[0]
+    return ss.add_worksheet(title=SHEET, rows=400, cols=len(HEADER))
+
+
 def write(rows, today=None):
     """Перезаписывает лист. Прежнее содержимое — в docs/ (бэкап на всякий случай)."""
     today = today or datetime.date.today()
     gc = gspread.service_account(filename=sr.CREDENTIALS_PATH)
-    ws = gc.open_by_key(SPREADSHEET).worksheet(SHEET)
+    ws = _sheet(gc.open_by_key(SPREADSHEET))
     backup = ws.get_all_values()
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "docs", f"добивка_бэкап_{today:%Y-%m-%d}.json")
