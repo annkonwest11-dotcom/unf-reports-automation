@@ -308,8 +308,10 @@ class SheetsClient:
     def _update_soprovozhdenie(self, report: Report, ws, all_rows: list, day: int, col_num: int) -> bool:
         # Шаблон «Смена Менеджер сопровождение»:
         #   Тип будний → осн.смена 2500; выходной → осн. нет.
-        #   Фирмы=да → +1800 в подработки (любой тип).
-        #   Заказы выходные (телефонов 1/2): тел 1 → 1800, тел 2 → 2100 (1800+300).
+        #   Фирмы=да → +1000, ★ТОЛЬКО В ВЫХОДНОЙ (решение Анны 05.09.2026:
+        #     «убираем ставку за фирмы в будни 1800, только в выхи 1000»).
+        #   Заказы выходные → 1800 независимо от числа телефонов: ★надбавка за
+        #     второй телефон (+300, было 2100) убрана совсем, там же.
         #   Заказы будние (доп телефон да/нет): да → +1800.
         #   Подработки = сумма компонентов (0 → пусто).
         is_weekend = bool(re.search(r'выход', report.day_type.lower()))
@@ -319,11 +321,9 @@ class SheetsClient:
 
         main_val = "" if is_weekend else "2500"
         side = 0
-        if firms_yes:
-            side += 1800
-        if re.search(r'2', ow):
-            side += 2100
-        elif re.search(r'1', ow):
+        if firms_yes and is_weekend:
+            side += 1000
+        if re.search(r'[12]', ow):
             side += 1800
         if obd_yes:
             side += 1800
