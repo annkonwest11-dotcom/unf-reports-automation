@@ -117,9 +117,16 @@ def _save_employees(data: dict):
 
 
 def _name_matches(registered: str, reported: str) -> bool:
-    """True if at least one significant word from registered name is in reported name."""
-    words = [w for w in registered.lower().split() if len(w) > 3 and w.isalpha()]
-    rep = reported.lower()
+    """True, если хотя бы одно значимое слово имени совпало.
+
+    Порядок слов не важен, регистр тоже, ё считается за е: «Караханова Виолетта»
+    и «Виолетта Караханова» — один человек, «Алёна» и «Алена» тоже.
+    """
+    def norm(t):
+        return t.lower().replace("ё", "е")
+
+    words = [w for w in norm(registered).split() if len(w) > 3 and w.isalpha()]
+    rep = norm(reported)
     return any(w in rep for w in words)
 
 
@@ -275,8 +282,8 @@ def _is_avans_confirmed():
 
 
 def _read_payout_rows():
-    """Строки таблицы выплат (A127:D133) → [(имя, ЗП, офиц, наличные), …]."""
-    grid = _open_summary_ws().get("A127:D133", value_render_option="UNFORMATTED_VALUE")
+    """Строки таблицы выплат (A154:D163) → [(имя, ЗП, офиц, наличные), …]."""
+    grid = _open_summary_ws().get("A154:D163", value_render_option="UNFORMATTED_VALUE")
     rows = []
     for r in grid:
         name = (r[0] if r else "") or ""
@@ -305,10 +312,10 @@ async def _cash_start(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     loop = asyncio.get_event_loop()
     grid = await loop.run_in_executor(
         None, lambda: _open_summary_ws().get(
-            "A127:D133", value_render_option="UNFORMATTED_VALUE"))
+            "A154:D163", value_render_option="UNFORMATTED_VALUE"))
     official = {}
     for i, row in enumerate(grid):
-        official[127 + i] = row[2] if len(row) > 2 else None
+        official[154 + i] = row[2] if len(row) > 2 else None
 
     queue = []
     for row, name, rule in cash_avans.CASH_PLAN:
@@ -408,7 +415,7 @@ async def _cash_finish(context: ContextTypes.DEFAULT_TYPE):
         ws = _open_summary_ws()
         updates = [{"range": f"D{row}", "values": [[amt if amt else ""]]}
                    for row, amt in results.items()]
-        updates.append({"range": "D127", "values": [[""]]})  # Дарья — без наличных
+        updates.append({"range": "D154", "values": [[""]]})  # Дарья — без наличных
         if updates:
             ws.batch_update(updates, value_input_option="USER_ENTERED")
 
