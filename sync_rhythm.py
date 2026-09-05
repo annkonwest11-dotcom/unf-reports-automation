@@ -181,6 +181,15 @@ def fetch_orders(today):
 
 # ---------- склейка карточек одного клиента ----------
 
+def _norm_alias(name, orders):
+    """Имя из ALIASES → имя карточки, как оно пришло из 1С (с точностью до пробелов)."""
+    target = _norm_name(name)
+    for n in orders:
+        if _norm_name(n) == target:
+            return n
+    return None
+
+
 def merge_cards(orders, base_of):
     """Заказы с карточек-двойников — на одного клиента.
 
@@ -193,8 +202,22 @@ def merge_cards(orders, base_of):
     оставляем как есть — лучше лишняя строка, чем перепутанные клиенты.
     Имя и база берутся у карточки со свежим заказом (актуальной).
     """
+    groups = list(group_same_client(orders).values())
+    # Пары, связанные вручную в ALIASES: клиент переехал на другую карточку, но
+    # по именам их объединять нельзя (запрет вложенности от 17.08). Досклеиваем
+    # такие группы точечно — например Angel Cakes, старая карточка и новая.
+    idx = {n: i for i, g in enumerate(groups) for n in g}
+    for raw, target in ALIASES.items():
+        i, j = idx.get(_norm_alias(raw, orders)), idx.get(_norm_alias(target, orders))
+        if i is not None and j is not None and i != j:
+            groups[i] = groups[i] + groups[j]
+            for n in groups[j]:
+                idx[n] = i
+            groups[j] = []
     merged, merged_base, cards = defaultdict(list), {}, {}
-    for members in group_same_client(orders).values():
+    for members in groups:
+        if not members:
+            continue
         # актуальная карточка — та, где заказывали последней
         main = max(members, key=lambda n: max(d for d, _ in orders[n]))
         for n in members:
