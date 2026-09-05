@@ -24,7 +24,8 @@ import logging
 from collections import defaultdict
 from datetime import datetime
 
-from sync_odata import (BASES, ALIASES, DATA_START_ROW, _fetch_odata, _open_spreadsheet,
+from sync_odata import (BASES, SHEET_BASES, ALIASES, DATA_START_ROW, _TRANSFER_TAIL,
+                        _fetch_odata, _open_spreadsheet, live_bases,
                         _parse_settings_period, aggregate_balances, norm_name)
 
 logger = logging.getLogger(__name__)
@@ -39,8 +40,14 @@ _ALIAS_NORM = {norm_name(k): v for k, v in ALIASES.items()}
 
 
 def canon(name):
-    """Имя карточки 1С → ключ строки листа (склеивает ЭДО/dsbx/счёт-дубли)."""
-    nn = norm_name(name)
+    """Имя карточки 1С → ключ строки листа (склеивает ЭДО/dsbx/счёт-дубли).
+
+    ★Сначала срезаем пометку о переводе между базами («… НА ИП ВОЛОДИХИНА»,
+    «… с 10.08.26 на ПЕРФИЛЬЕВ»): без этого переведённый клиент выглядел новой
+    карточкой и выпадал из беби-вычета — так за август терялись SAVVA (56 200)
+    и ЛИМОНЧИНО (10 940), разбор 05.09.2026.
+    """
+    nn = norm_name(_TRANSFER_TAIL.sub("", str(name or "")))
     return norm_name(_ALIAS_NORM[nn]) if nn in _ALIAS_NORM else nn
 
 
@@ -75,7 +82,7 @@ def data_rows(spreadsheet):
     СПРАВОЧНИКЕ может отличаться (у SAVVA: строка листа «…(ООО БРАНЧ) ЭДО», а в
     справочнике есть и «…(ООО БРАНЧ)» — VLOOKUP не находил, G оставался 0)."""
     out = {}
-    for cfg in BASES.values():
+    for cfg in SHEET_BASES.values():
         grid = spreadsheet.worksheet(cfg["sheet_name"]).get("A1:L600")
         for r in grid[DATA_START_ROW - 1:]:
             name = (r[0] or "").strip() if r else ""
@@ -129,7 +136,7 @@ def build_rows(spreadsheet):
     logger.info("Период %s, клиентов с беби='Да': %d", label, len(clients))
 
     oborot, pay = defaultdict(lambda: [0.0, 0.0]), defaultdict(float)
-    for cfg in BASES.values():
+    for cfg in live_bases().values():
         for cn, vals in fetch_oborot_by_group(cfg["id"], start, end, clients).items():
             oborot[cn][0] += vals[0]
             oborot[cn][1] += vals[1]
