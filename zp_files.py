@@ -173,7 +173,7 @@ def build_files(only=None, outdir=None):
     outdir = outdir or tempfile.mkdtemp(prefix="zp_files_")
     ss = _open_spreadsheet()
     start, end, month_label, year = _period(ss)
-    sh = Sheet(ss.worksheet("СВОДНАЯ_ЗП").get("A1:H140", value_render_option="UNFORMATTED_VALUE"))
+    sh = Sheet(ss.worksheet("СВОДНАЯ_ЗП").get("A1:H175", value_render_option="UNFORMATTED_VALUE"))
 
     beby = {}
     for r in ss.worksheet("БЕБИ_ЛИСТЫ").get("A4:J23"):
@@ -182,7 +182,7 @@ def build_files(only=None, outdir=None):
             beby[canon(nm)] = (num(r[5] if len(r) > 5 else 0), num(r[7] if len(r) > 7 else 0))
 
     grids, bals, soft_idx = {}, {}, {}
-    for base_name, cfg in BASES.items():
+    for base_name, cfg in SHEET_BASES.items():
         grids[base_name] = ss.worksheet(cfg["sheet_name"]).get("A1:L600")
         bals[base_name] = load_balances(cfg["id"], start, end)
         soft_idx[base_name] = build_token_index(bals[base_name].keys())

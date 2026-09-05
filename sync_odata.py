@@ -61,10 +61,24 @@ SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
 # Данные начинаются с 4-й строки (1 — заголовок листа, 2-3 пустые)
 DATA_START_ROW = 4
 
+# ★★★ТРЕТЬЕ ИП — Володихина В.В., база 184621 (Анна, 04.09.2026).
+# `sheet_name=None` — у базы ПОКА НЕТ своего листа ДАННЫЕ_* в зарплатной таблице,
+# поэтому во взаиморасчёты (запись листов, расчёт ЗП) она не идёт: всё, что пишет
+# в листы, пропускает базы без имени листа. При этом чтения, которым нужен только
+# id, — ритм заказов, отчёт по продажам, беби-листы — видят её сразу.
+# ⏳Чтобы включить в зарплату: завести лист «ДАННЫЕ_Володихина» (+ парный
+# «ДАННЫЕ_Володихина_СЛЕД» для окна 1-10), вписать его сюда и дописать третье
+# слагаемое в формулы оплат СВОДНОЙ у каждого сотрудника.
+# ⚠️Доступа к OData на 04.09 ещё НЕТ: пользователь api_bot в базе 184621 не заведён
+# (401 и с логином, и без; для сравнения база Губарева отдаёт 200).
 BASES = {
     "perfilev": {"id": "152757", "sheet_name": "ДАННЫЕ_Перфильев"},
     "gubarev": {"id": "64904", "sheet_name": "ДАННЫЕ_Губарев"},
+    "volodihina": {"id": "184621", "sheet_name": None},
 }
+
+# Базы, у которых есть свой лист ДАННЫЕ_* — только они участвуют во взаиморасчётах.
+SHEET_BASES = {k: v for k, v in BASES.items() if v.get("sheet_name")}
 
 # Синонимы: имя контрагента в 1С → имя строки в листе, куда его влить.
 # Это отдельные карточки 1С (ЭДО / dsbx / счёт) того же ресторана — их суммы
@@ -231,6 +245,35 @@ def _fetch_odata(base_id, entity):
         out.extend(data.get("value", []))
         url = data.get("@odata.nextLink")
     return out
+
+
+_BASE_OK = {}
+
+
+def base_available(base_id):
+    """Отвечает ли база на OData. Кэшируется на процесс.
+
+    Третье ИП (Володихина, 184621) заведено в конфиге раньше, чем выдан доступ:
+    пользователя api_bot в базе пока нет, любой запрос отдаёт 401. Ронять из-за
+    этого ежедневные синки нельзя, поэтому недоступную базу пропускаем с громким
+    предупреждением — а как только доступ появится, она подхватится сама, без
+    правки кода.
+    """
+    if base_id in _BASE_OK:
+        return _BASE_OK[base_id]
+    try:
+        _fetch_odata(base_id, "Catalog_Контрагенты?$top=1")
+        _BASE_OK[base_id] = True
+    except Exception as exc:
+        _BASE_OK[base_id] = False
+        logger.warning("База %s НЕДОСТУПНА (%s) — пропускаю её в этом прогоне",
+                       base_id, str(exc)[:90])
+    return _BASE_OK[base_id]
+
+
+def live_bases(bases=None):
+    """{ключ: cfg} по базам, которые сейчас отвечают."""
+    return {k: v for k, v in (bases or BASES).items() if base_available(v["id"])}
 
 
 def _current_month_period(today=None):
@@ -514,9 +557,9 @@ def plan_updates(sheet_col_a, odata_balances, aliases=None, skip=None):
 # РОП-оборот: сумма регистра «Продажи» (СуммаTurnover) за текущий месяц по обеим
 # базам пишется в жёлтую ячейку оборота блока РОП СВОДНОЙ (Блок 3 «Факт — оборот»).
 SUMMARY_SHEET = "СВОДНАЯ_ЗП"
-OBOROT_CELL = "E87"          # Блок 3 РОП «Факт — оборот» (раскладка после Лилии 14.08)
+OBOROT_CELL = "E115"         # Блок 3 РОП «Факт — оборот» (раскладка после стажёров 01.09)
 # %плана РОП (вычисленные) для мини-отчёта: новые продажи / оборот / поступления
-ROP_PCT_CELLS = ("C83", "C88", "C92")
+ROP_PCT_CELLS = ("C111", "C116", "C120")
 
 
 def fetch_oborot(base_id, today=None):
@@ -541,8 +584,8 @@ def sync_oborot(dry_run=False, today=None):
     ss = _open_spreadsheet()
     info = resolve_mode(ss, today)
     total = round(sum(fetch_oborot(cfg["id"], info["month_date"])
-                      for cfg in BASES.values()), 2)
-    logger.info("РОП оборот (Перф+Губ) = %.2f [режим=%s]", total, info["mode"])
+                      for cfg in live_bases().values()), 2)
+    logger.info("РОП оборот (все ИП) = %.2f [режим=%s]", total, info["mode"])
     if info["mode"] == "overlap":
         logger.info("Период %s не закрыт — E88 не трогаю (заморозка)",
                     info["period_label"])
@@ -562,7 +605,7 @@ def oborot_report(today=None):
     ss = _open_spreadsheet()
     info = resolve_mode(ss, today)
     md = info["month_date"]
-    total = round(sum(fetch_oborot(cfg["id"], md) for cfg in BASES.values()), 2)
+    total = round(sum(fetch_oborot(cfg["id"], md) for cfg in live_bases().values()), 2)
     postup = None
     try:
         from sync_kassa import fetch_postupleniya, POSTUP_CELL
@@ -678,7 +721,7 @@ def sync_all_bases(dry_run=False, append_new=False, today=None):
     logger.info("Старт OData-синка: режим=%s, период=%s (dry_run=%s, append_new=%s)",
                 info["mode"], info["period_label"], dry_run, append_new)
     summary = {"_mode": info["mode"], "_period": info["period_label"]}
-    for base_name, cfg in BASES.items():
+    for base_name, cfg in SHEET_BASES.items():
         logger.info("Обработка %s...", base_name)
         target = cfg["sheet_name"] + info["suffix"]
         summary[base_name] = sync_base(

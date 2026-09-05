@@ -1,12 +1,23 @@
 """Ритм заказов клиентов: отчёт в Google Sheets + задачи менеджерам в Битрикс24.
 
 Что делает (ежедневно по будням в 11:00, cron на VPS):
-  1. тянет расходные накладные из 1С (OData, обе базы) за HIST_DAYS;
-  2. считает личный ритм каждого клиента — медиану интервалов между заказами,
+  1. тянет расходные накладные из 1С (OData, обе базы) за HIST_DAYS + ACTIVE_DAYS;
+  2. склеивает карточки-двойники одного клиента (перевод между базами);
+  3. считает личный ритм каждого клиента — медиану интервалов между заказами,
      в ЕГО рабочих днях (дни недели, когда он вообще заказывает; иначе после
      выходных все выглядят просроченными);
-  3. обновляет лист РИТМ_ЗАКАЗОВ в таблице ДЕБИТОРКА;
-  4. тем, у кого срок подошёл или прошёл, ставит задачи-чек-листы менеджерам.
+  4. обновляет лист РИТМ_ЗАКАЗОВ в таблице ДЕБИТОРКА;
+  5. тем, у кого срок подошёл или прошёл, ставит задачи-чек-листы менеджерам
+     (не длиннее MAX_CHECKLIST пунктов — длинный список не выполняют).
+     Задачи по отваливающимся («Вернуть клиентов») сейчас выключены — LOST_TASKS.
+
+ТРИ ПЕРИОДА, они про разное:
+  ACTIVE_DAYS (45) — кто вообще попадает в отчёт: заказывал за последние 45 дней;
+  HIST_DAYS   (56) — по какому куску истории считаем ритм: 8 недель НАЗАД ОТ
+                     ПОСЛЕДНЕГО ЗАКАЗА КЛИЕНТА (не от сегодня);
+  LOST_DAYS   (21) — с какого молчания клиент помечается «ОТВАЛИВАЕТСЯ».
+Из 1С грузим 45 + 56 = 101 день: иначе у молчащего месяц клиента в окне истории
+не осталось бы заказов и ритм считать было бы не по чему.
 
 Маршрутизация задач (правило Анны): есть менеджер сопровождения → ему, иначе
 менеджеру поиска; клиенты Абрамовой → Владиславе. Всё,
@@ -50,7 +61,11 @@ logger = logging.getLogger(__name__)
 # --- источники ---
 ODATA_LOGIN = os.environ.get("ODATA_LOGIN", "api_bot")
 ODATA_PASSWORD = os.environ.get("ODATA_PASSWORD", "slavaperfilev1414")
-BASES = {"Перфильев": "152757", "Губарев": "64904"}
+# ★Три ИП (Анна, 04.09.2026): Володихина В.В. — новая база 184621, ритм считаем
+# и по ней тоже. Недоступную базу прогон пропускает с предупреждением, а не падает
+# (см. fetch_orders): доступ к 184621 на 04.09 ещё не выдан — пользователя api_bot
+# в ней нет, OData отвечает 401. Как только заведут — база подхватится сама.
+BASES = {"Перфильев": "152757", "Губарев": "64904", "Володихина": "184621"}
 
 CREDENTIALS_PATH = os.path.join(os.path.dirname(__file__), "credentials.json")
 SALARY_SPREADSHEET = "1KaxfaSWTDR31eAJfmpahaNwaO2Qohrh5xua1Rrjf2Zo"   # СПРАВОЧНИК менеджеров
@@ -65,6 +80,22 @@ HIST_DAYS = 56     # окно истории для медианы ритма (8
 ACTIVE_DAYS = 45   # клиент остаётся в отчёте, пока молчит не дольше 45 дней
 LOST_DAYS = 21     # молчит 3 недели и дольше → «ОТВАЛИВАЕТСЯ», отдельный статус
 OVERDUE_RATIO = 1.5  # во сколько раз пропущено больше ритма → «ПРОСРОЧЕНО»
+# ★★★ Сколько пунктов максимум в одной задаче (решение Анны 03.09.2026).
+# Причина: 17.08 у Алёны было 29 пунктов «напомнить» + 15 «вернуть» — 0 отметок,
+# задачу просто закрыли целиком; единственная, кто отработала список, — Дарья,
+# у которой пунктов было 4. Длинный список не выполняют, он превращается
+# в формальность. Берём самых запущенных (список уже отсортирован по ratio),
+# остальные подождут следующего прогона — их положение только ухудшится,
+# так что наверх они поднимутся сами.
+# ★Задачи «Вернуть клиентов» ПОКА НЕ СТАВИМ (решение Анны 04.09.2026: «вернуть
+# клиентов пока не надо ставить, просто напоминание о заказе»). Статус
+# «ОТВАЛИВАЕТСЯ» продолжает считаться и попадает в лист РИТМ_ЗАКАЗОВ — выключена
+# только постановка задач. Чтобы вернуть — поставить True.
+LOST_TASKS = False
+MAX_CHECKLIST = 15
+# У Алёны клиентов заметно больше (сопровождение почти всех ресторанов), ей —
+# больше пунктов: решение Анны 03.09.2026 «у всех 15, у Алёны до 20».
+MAX_CHECKLIST_BY_MANAGER = {"Алена Черкашина": 20}
 # ★17.08: порог был 21 день, и клиент, переставший заказывать, просто исчезал из
 # отчёта — чем дольше молчал, тем меньше его было видно. Так терялись 26 клиентов,
 # среди них Крабы Кутабы (130 тыс.), 16 тонн Пресня (88 тыс.), Милтон Грин (78 тыс.).
@@ -109,9 +140,18 @@ def fetch_orders(today):
     """
     since = (today - datetime.timedelta(days=HIST_DAYS + ACTIVE_DAYS)).isoformat()
     orders, base_of = defaultdict(list), {}
+    skipped = []
     for base_name, base_id in BASES.items():
-        names = {c["Ref_Key"]: (c.get("Description") or "").strip()
-                 for c in _odata(base_id, "Catalog_Контрагенты?$select=Ref_Key,Description&$format=json")}
+        try:
+            names = {c["Ref_Key"]: (c.get("Description") or "").strip()
+                     for c in _odata(base_id, "Catalog_Контрагенты?$select=Ref_Key,Description&$format=json")}
+        except Exception as exc:
+            # База в конфиге есть, а доступа ещё нет (новое ИП заводят раньше,
+            # чем выдают api_bot). Ежедневный отчёт из-за этого падать не должен.
+            logger.warning("База %s (%s) НЕДОСТУПНА: %s — пропускаю",
+                           base_name, base_id, str(exc)[:90])
+            skipped.append(base_name)
+            continue
         docs = _odata(base_id, (
             "Document_РасходнаяНакладная?"
             f"$filter=Date ge datetime'{since}T00:00:00' and Posted eq true and DeletionMark eq false"
@@ -124,6 +164,10 @@ def fetch_orders(today):
             day = datetime.date.fromisoformat(d["Date"][:10])
             orders[client].append((day, float(d.get("СуммаДокумента") or 0)))
             base_of[client] = base_name
+    if skipped:
+        # Видно и в логе cron, и в выводе ручного прогона: отчёт неполный.
+        print(f"⚠️ Базы пропущены (нет доступа): {', '.join(skipped)} — "
+              f"их клиенты в отчёт и задачи НЕ вошли")
     return orders, base_of
 
 
@@ -408,6 +452,25 @@ def _bitrix(method, params):
 CHUNK = 30   # пунктов в секции чек-листа; больше — бьём на несколько, чтобы все показывались
 
 
+def rename_checklist_root(tid, title):
+    """Переименовать служебный заголовок чек-листа.
+
+    Битрикс сам заводит корневую группу с техническим именем «BX_CHECKLIST_1»
+    и складывает наши пункты в неё — менеджер видит эту строку как название
+    списка. Ставим вместо неё человеческую подпись.
+    """
+    try:
+        res = _bitrix("task.checklistitem.getlist", {"taskId": tid})
+        items = res if isinstance(res, list) else (res or {}).get("result", [])
+        for it in items:
+            if str(it.get("PARENT_ID")) in ("0", "") and it.get("TITLE", "").startswith("BX_CHECKLIST"):
+                _bitrix("task.checklistitem.update",
+                        {"taskId": tid, "itemId": it["ID"], "fields": {"TITLE": title}})
+                return
+    except Exception as exc:  # косметика не должна ронять постановку задач
+        logger.warning("Не переименовал заголовок чек-листа #%s: %s", tid, str(exc)[:80])
+
+
 def add_checklist(tid, lines):
     if len(lines) <= CHUNK:
         for ln in lines:
@@ -449,20 +512,31 @@ def create_tasks(dist, today, lost=False):
         uid = MANAGER_IDS.get(FIRM_ASSIGNEE if is_firms else manager)
         if not uid or not clients:
             continue
-        kind = "фирмы" if is_firms else "клиентов"
+        # В задачу идут только самые запущенные: длинный чек-лист не выполняют.
+        total = len(clients)
+        clients = clients[:MAX_CHECKLIST_BY_MANAGER.get(manager, MAX_CHECKLIST)]
+        cut = total - len(clients)
+        kind = (plural(len(clients), "фирма", "фирмы", "фирм") if is_firms
+                else plural(len(clients), "клиент", "клиента", "клиентов"))
         if lost:
             desc = (f"Клиенты перестали заказывать — связаться и выяснить причину, "
                     f"вернуть в работу.\n\n"
-                    f"В списке {len(clients)} {kind}, молчащих {LOST_DAYS} "
+                    f"В списке {len(clients)} {kind}, "
+                    f"{plural(len(clients), 'молчащий', 'молчащих', 'молчащих')} {LOST_DAYS} "
                     f"{plural(LOST_DAYS, 'день', 'дня', 'дней')} и дольше (по данным 1С).\n"
-                    f"Формат: клиент (юр. лицо) — сколько дней молчит — дата последнего "
+                    + (f"Это самые запущенные; всего таких {total}, "
+                       f"остальные {cut} — в следующем списке.\n" if cut else "")
+                    + f"Формат: клиент (юр. лицо) — сколько дней молчит — дата последнего "
                     f"заказа — как часто брали раньше.")
             title = ("Вернуть клиентов — ФИРМЫ" if is_firms else "Вернуть клиентов")
         else:
             desc = (f"Связаться с клиентами и напомнить про заказ на завтра ({tomorrow}).\n\n"
-                    f"В списке {len(clients)} {kind}, выпавших из обычного ритма закупок "
-                    f"(по данным 1С за {HIST_DAYS // 7} недель).\n"
-                    f"Формат: клиент (юр. лицо) — дней без заказа — обычная периодичность — "
+                    f"В списке {len(clients)} {kind}, "
+                    f"{plural(len(clients), 'выпавший', 'выпавших', 'выпавших')} "
+                    f"из обычного ритма закупок (по данным 1С за {HIST_DAYS // 7} недель).\n"
+                    + (f"Это самые запущенные; всего таких {total}, "
+                       f"остальные {cut} — в следующем списке.\n" if cut else "")
+                    + f"Формат: клиент (юр. лицо) — дней без заказа — обычная периодичность — "
                     f"дата последнего заказа.")
             title = ("Напомнить о заказе на завтра — ФИРМЫ" if is_firms
                      else "Напомнить о заказе на завтра")
@@ -473,7 +547,9 @@ def create_tasks(dist, today, lost=False):
             "TASK_CONTROL": "Y"}})
         tid = (task or {}).get("task", {}).get("id")
         add_checklist(tid, [checklist_line(r) for r in clients])
-        logger.info("Задача #%s → %s (%s клиентов)", tid, manager, len(clients))
+        rename_checklist_root(tid, "Клиенты, которые перестали заказывать" if lost
+                              else "Клиенты — обзвонить сегодня")
+        logger.info("Задача #%s → %s (%s из %s клиентов)", tid, manager, len(clients), total)
         created.append((tid, manager, len(clients)))
     return created
 
@@ -506,7 +582,12 @@ def run(apply=False, with_tasks=True, today=None):
     write_report(gc, rows, today)
     created = []
     if with_tasks:
-        created = create_tasks(dist, today) + create_tasks(lost, today, lost=True)
+        created = create_tasks(dist, today)
+        if LOST_TASKS:
+            created += create_tasks(lost, today, lost=True)
+        else:
+            print(f"«Вернуть клиентов» — задачи выключены (LOST_TASKS=False); "
+                  f"в отчёте таких клиентов {sum(len(v) for v in lost.values())}")
     print("Создано задач:", len(created))
     return {"rows": rows, "dist": dist, "lost": lost, "created": created}
 

@@ -275,8 +275,8 @@ def _is_avans_confirmed():
 
 
 def _read_payout_rows():
-    """Строки таблицы выплат (A127:D133) → [(имя, ЗП, офиц, наличные), …]."""
-    grid = _open_summary_ws().get("A127:D133", value_render_option="UNFORMATTED_VALUE")
+    """Строки таблицы выплат (A154:D163) → [(имя, ЗП, офиц, наличные), …]."""
+    grid = _open_summary_ws().get("A154:D163", value_render_option="UNFORMATTED_VALUE")
     rows = []
     for r in grid:
         name = (r[0] if r else "") or ""
@@ -305,10 +305,10 @@ async def _cash_start(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     loop = asyncio.get_event_loop()
     grid = await loop.run_in_executor(
         None, lambda: _open_summary_ws().get(
-            "A127:D133", value_render_option="UNFORMATTED_VALUE"))
+            "A154:D163", value_render_option="UNFORMATTED_VALUE"))
     official = {}
     for i, row in enumerate(grid):
-        official[127 + i] = row[2] if len(row) > 2 else None
+        official[154 + i] = row[2] if len(row) > 2 else None
 
     queue = []
     for row, name, rule in cash_avans.CASH_PLAN:
@@ -408,7 +408,7 @@ async def _cash_finish(context: ContextTypes.DEFAULT_TYPE):
         ws = _open_summary_ws()
         updates = [{"range": f"D{row}", "values": [[amt if amt else ""]]}
                    for row, amt in results.items()]
-        updates.append({"range": "D127", "values": [[""]]})  # Дарья — без наличных
+        updates.append({"range": "D154", "values": [[""]]})  # Дарья — без наличных
         if updates:
             ws.batch_update(updates, value_input_option="USER_ENTERED")
 

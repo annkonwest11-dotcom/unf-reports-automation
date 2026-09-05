@@ -22,7 +22,8 @@ from html import escape
 import requests
 from dotenv import load_dotenv
 
-from sync_odata import (BASES, DATA_START_ROW, _open_spreadsheet, _parse_settings_period)
+from sync_odata import (BASES, SHEET_BASES, DATA_START_ROW, _open_spreadsheet,
+                        _parse_settings_period)
 
 MONTHS = ["ЯНВАРЬ", "ФЕВРАЛЬ", "МАРТ", "АПРЕЛЬ", "МАЙ", "ИЮНЬ",
           "ИЮЛЬ", "АВГУСТ", "СЕНТЯБРЬ", "ОКТЯБРЬ", "НОЯБРЬ", "ДЕКАБРЬ"]
@@ -32,6 +33,8 @@ SHORT = {
     "Дарья Вольнова": "ДАРЬЯ",
     "Ксения Наныкина": "КСЕНИЯ",
     "Лилия Сулименко": "ЛИЛИЯ",
+    "София Хакимова": "СОФИЯ",
+    "Виолетта Караханова": "ВИОЛЕТТА",
     "Алена Черкашина": "АЛЁНА",
     "Владислава Герасимчук": "ВЛАДА",
     "Анна Кононенко (РОП)": "АННА (РОП)",
@@ -139,7 +142,7 @@ def fact_by_manager(ss):
     и «ВСЕ РЕСТОРАНЫ» — база бонусов РОП.
     """
     out = {}
-    for cfg in BASES.values():
+    for cfg in SHEET_BASES.values():
         for r in ss.worksheet(cfg["sheet_name"]).get(
                 "A1:L600", value_render_option="UNFORMATTED_VALUE")[DATA_START_ROW - 1:]:
             r = (r or []) + [""] * (12 - len(r or []))
@@ -184,7 +187,14 @@ def build_search(sh, name, month, facts, pay, new_plan_setting=0.0):
     raw, adj = facts.get(name, (pays, pays))
     new_plan = new_plan_setting or (round(new_fact / plan_pct) if plan_pct else 0)
 
-    out = [f"⭕️ЗП {SHORT[name]} ЗА {month} ⭕️", line("+", shifts, f"{int(cnt)} {shifts_word(cnt)} × 2500")]
+    # Ставка за смену не всегда 2 500: у новых сотрудников первые 7 смен идут по
+    # 1 700 ₽ (правило Анны от 01.09.2026), поэтому в месяц перехода смены смешанные.
+    per_shift = shifts / cnt if cnt else 0
+    if cnt and abs(per_shift - round(per_shift)) < 0.01:
+        shift_note = f"{int(cnt)} {shifts_word(cnt)} × {int(round(per_shift))}"
+    else:
+        shift_note = f"{int(cnt)} {shifts_word(cnt)}"
+    out = [f"⭕️ЗП {SHORT[name]} ЗА {month} ⭕️", line("+", shifts, shift_note)]
     if raw - adj > 1:
         out.append(f"⭕️Оплаты клиентов {big(raw)} (без вычета беби), "
                    f"в расчёт ЗП {big(adj)} (вычет −{big(raw - adj)})")
@@ -360,7 +370,7 @@ def finish(out, total, name, pay):
 def build_texts(ss=None):
     """{ФИО: текст расчёта} по всем сотрудникам. Отсюда же берёт бот для команды /zp."""
     ss = ss or _open_spreadsheet()
-    sh = Sheet(ss.worksheet("СВОДНАЯ_ЗП").get("A1:H140", value_render_option="UNFORMATTED_VALUE"))
+    sh = Sheet(ss.worksheet("СВОДНАЯ_ЗП").get("A1:H175", value_render_option="UNFORMATTED_VALUE"))
     settings = ss.worksheet("НАСТРОЙКИ").get("A1:D30", value_render_option="UNFORMATTED_VALUE")
     period = _parse_settings_period(ss)
     month = MONTHS[period[1] - 1] if period else ""
@@ -391,6 +401,10 @@ def build_texts(ss=None):
     texts = {}
     for name in ("Дарья Вольнова", "Ксения Наныкина", "Лилия Сулименко"):
         texts[name] = build_search(sh, name, month, facts, pay, plans["search"])
+    # Стажёры: у каждой свой план в НАСТРОЙКАХ (первый месяц — 50% от общего).
+    for name in ("София Хакимова", "Виолетта Караханова"):
+        texts[name] = build_search(sh, name, month, facts, pay,
+                                   setting(name, "Оборот новых клиентов") or plans["search"])
     texts["Алена Черкашина"] = build_support(sh, "Алена Черкашина", month, facts, pay,
                                              plans["alena"])
     texts["Анна Кононенко (РОП)"] = build_rop(sh, "Анна Кононенко (РОП)", month, pay, plans)
@@ -405,7 +419,7 @@ def official_zp_ready(ss=None):
     пометка «официальная зарплата — добавим 10-го».
     """
     ss = ss or _open_spreadsheet()
-    sh = Sheet(ss.worksheet("СВОДНАЯ_ЗП").get("A1:H140", value_render_option="UNFORMATTED_VALUE"))
+    sh = Sheet(ss.worksheet("СВОДНАЯ_ЗП").get("A1:H175", value_render_option="UNFORMATTED_VALUE"))
     return any(vals[3] for vals in sh.payments().values())
 
 
@@ -416,7 +430,7 @@ def department_summary(ss=None):
     Возвращает HTML: моноширинный <pre>, иначе колонки в Telegram разъедутся.
     """
     ss = ss or _open_spreadsheet()
-    sh = Sheet(ss.worksheet("СВОДНАЯ_ЗП").get("A1:H140", value_render_option="UNFORMATTED_VALUE"))
+    sh = Sheet(ss.worksheet("СВОДНАЯ_ЗП").get("A1:H175", value_render_option="UNFORMATTED_VALUE"))
     period = _parse_settings_period(ss)
     month = MONTHS[period[1] - 1] if period else ""
     pay = sh.payments()
@@ -455,7 +469,7 @@ def cash_summary(ss=None):
     Это колонка «Остаток 10 — наличными» таблицы выплат = ИТОГО минус авансы
     (и минус официальная часть, когда она проставлена)."""
     ss = ss or _open_spreadsheet()
-    sh = Sheet(ss.worksheet("СВОДНАЯ_ЗП").get("A1:H140", value_render_option="UNFORMATTED_VALUE"))
+    sh = Sheet(ss.worksheet("СВОДНАЯ_ЗП").get("A1:H175", value_render_option="UNFORMATTED_VALUE"))
     period = _parse_settings_period(ss)
     month = MONTHS[period[1] - 1] if period else ""
     pay = sh.payments()

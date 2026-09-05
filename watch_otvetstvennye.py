@@ -20,7 +20,7 @@ import json
 import logging
 import os
 
-from sync_odata import (BASES, ALIASES, DATA_START_ROW, _fetch_odata, _open_spreadsheet,
+from sync_odata import (BASES, SHEET_BASES, ALIASES, DATA_START_ROW, _fetch_odata, _open_spreadsheet,
                         _parse_settings_period, aggregate_balances, norm_name)
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ def canon(name):
 def snapshot():
     """{ref: {база, имя карточки, ответственный}} по всем контрагентам обеих баз."""
     out = {}
-    for base_name, cfg in BASES.items():
+    for base_name, cfg in SHEET_BASES.items():
         emp = {e["Ref_Key"]: (e.get("Description") or "").strip()
                for e in _fetch_odata(cfg["id"], "Catalog_Сотрудники")}
         for c in _fetch_odata(cfg["id"], "Catalog_Контрагенты"):
@@ -59,7 +59,7 @@ def our_clients():
     """{canon: оплаты за расчётный месяц} — только строки наших листов ДАННЫЕ."""
     ss = _open_spreadsheet()
     pays = {}
-    for cfg in BASES.values():
+    for cfg in SHEET_BASES.values():
         for r in ss.worksheet(cfg["sheet_name"]).get(
                 "A1:L600", value_render_option="UNFORMATTED_VALUE")[DATA_START_ROW - 1:]:
             name = str(r[0]).strip() if r and len(r) > 0 else ""
