@@ -460,6 +460,22 @@ def _long_numbers(name):
     return set(re.findall(r"\d{5,}", str(name or "")))
 
 
+# Дата в пометке («с 20.10.25 на ПЕРФИЛЬЕВ») — не номер точки: её числа
+# нужно выбросить, иначе одна и та же карточка с датой и без не склеится.
+_DATE_IN_NAME = re.compile(r"\d{1,2}\.\d{1,2}\.\d{2,4}")
+
+
+def _short_numbers(name):
+    """Короткие числа имени — номер точки сети («Приёмка 1», «А 20»).
+
+    Длинные (телефоны) разбирает `_long_numbers`; здесь именно нумерация
+    филиалов, по которой соседние точки и различаются.
+    """
+    cleaned = _DATE_IN_NAME.sub(" ", str(name or ""))
+    return frozenset(w.lstrip("0") or "0"
+                     for w in re.findall(r"\d+", cleaned) if len(w) <= 2)
+
+
 def group_same_client(names):
     """{имя: [все имена того же контрагента]} — склейка только при однозначности.
 
@@ -481,14 +497,28 @@ def group_same_client(names):
         if not same_client(toks[a], toks[b]):
             return False
         na, nb = nums[a], nums[b]
-        return not (na and nb and na != nb)
+        if na and nb and na != nb:
+            return False
+        # Точки одной сети различаются только номером: «Peshi Приёмка 1» и
+        # «Peshi Приёмка 2» — разные адреса, склеивать их нельзя. Значимые слова
+        # у них совпадают, поэтому решает номер.
+        sa, sb = _short_numbers(a), _short_numbers(b)
+        return not (sa and sb and sa != sb)
 
     for a in names:
         hits = [b for b in names if b != a and matches(a, b)]
-        if len(hits) == 1:
-            ra, rb = find(a), find(hits[0])
-            if ra != rb:
-                parent[rb] = ra
+        if not hits:
+            continue
+        # Раньше склеивали только при единственном кандидате, и карточка,
+        # разбитая натрое, не склеивалась вовсе: «Ильфорно Неглинная» жила в
+        # трёх базах и числилась просроченной, хотя заказывала (05.09.2026).
+        # Теперь склеиваем всю группу, но лишь когда кандидаты не противоречат
+        # друг другу — каждый с каждым тот же клиент.
+        if all(matches(x, y) for i, x in enumerate(hits) for y in hits[i + 1:]):
+            for h in hits:
+                ra, rb = find(a), find(h)
+                if ra != rb:
+                    parent[rb] = ra
 
     groups = {}
     for n in names:
