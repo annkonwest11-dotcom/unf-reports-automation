@@ -471,8 +471,38 @@ ZP_GROUP_CHAT_ID = os.environ.get("ZP_GROUP_CHAT_ID", "")
 
 # ─── беби-листы: накладная PDF → лист «аналитика беби» ────────────────────────
 
+# Кто может присылать боту накладные по беби. Решение Анны 06.09.2026: накладные
+# кидает Влада, и ТОЛЬКО в личку — «мы в группе продажи график этого не делаем,
+# всё только через личку». По умолчанию Влада (id из employees.json), список
+# можно переопределить в .env: BEBY_SENDER_IDS=111,222
+BEBY_VLADA_ID = 6630193697
+BEBY_SENDER_IDS = {int(x) for x in os.environ.get(
+    "BEBY_SENDER_IDS", str(BEBY_VLADA_ID)).replace(" ", "").split(",") if x}
+if ANNA_USER_ID:
+    BEBY_SENDER_IDS.add(ANNA_USER_ID)
+
+
+def _beby_sender_name(user) -> str | None:
+    """Имя приславшего накладную или None, если ему это не разрешено."""
+    if not user or user.id not in BEBY_SENDER_IDS:
+        return None
+    if user.id == ANNA_USER_ID:
+        return "Анна"
+    return _load_employees().get(str(user.id)) or user.full_name or str(user.id)
+
+
+def _beby_close_kb(sheet, d1, d2) -> InlineKeyboardMarkup:
+    """Кнопка «Закрыть период» — показываем только Анне: границы периодов её."""
+    return InlineKeyboardMarkup([[InlineKeyboardButton(
+        f"Закрыть период {d1:%d.%m}–{d2:%d.%m}",
+        callback_data=f"beby:close:{sheet}:{d1:%Y-%m-%d}:{d2:%Y-%m-%d}")]])
+
+
 async def handle_beby_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """PDF накладной от Анны в личке: внести в таблицу и показать текущий период."""
+    """PDF накладной в личке от Анны или Влады: внести в таблицу.
+
+    Приславшему уходит подтверждение по накладной, Анне — оно же плюс сводка
+    текущего периода с прибылью и кнопка «Закрыть период»."""
     message = update.effective_message
     doc = message.document if message else None
     chat = update.effective_chat
@@ -487,9 +517,10 @@ async def handle_beby_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not (name.endswith(".pdf") or doc.mime_type == "application/pdf"):
         logger.info("Beby: пропускаю, не PDF (%s)", name or doc.mime_type)
         return
-    if not _is_from_anna(update):
-        logger.info("Beby: пропускаю, отправитель %s не Анна (%s)",
-                    getattr(user, "id", None), ANNA_USER_ID)
+    sender = _beby_sender_name(user)
+    if sender is None:
+        logger.info("Beby: пропускаю, отправителю %s накладные не разрешены (%s)",
+                    getattr(user, "id", None), sorted(BEBY_SENDER_IDS))
         return
     if chat.type != "private":
         await message.reply_text(
@@ -502,7 +533,7 @@ async def handle_beby_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
         tg_file = await doc.get_file()
         await tg_file.download_to_drive(tmp)
         loop = asyncio.get_event_loop()
-        text, period = await loop.run_in_executor(
+        head, summary, period = await loop.run_in_executor(
             None, lambda: beby_report.process_invoice(tmp))
     except beby_invoice.NotAnInvoice as e:
         # Юшин шлёт и счета на оплату — их в отчёт не берём (правило Анны 18.08)
@@ -517,15 +548,32 @@ async def handle_beby_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
             os.remove(tmp)
 
     sheet, d1, d2 = period
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-        f"Закрыть период {d1:%d.%m}–{d2:%d.%m}",
-        callback_data=f"beby:close:{sheet}:{d1:%Y-%m-%d}:{d2:%Y-%m-%d}")]])
-    await message.reply_text(text, reply_markup=kb)
+    is_anna = user.id == ANNA_USER_ID
+    if is_anna:
+        await message.reply_text(f"{head}\n\n{summary}",
+                                 reply_markup=_beby_close_kb(sheet, d1, d2))
+        return
+
+    # Влада видит только свою накладную: прибыль и рентабельность — Анне
+    await message.reply_text(f"{head}\n\nПередал Анне, период закроет она.")
+    if ANNA_CHAT_ID:
+        try:
+            await context.bot.send_message(
+                chat_id=int(ANNA_CHAT_ID),
+                text=f"📄 Накладную прислала {sender}.\n\n{head}\n\n{summary}",
+                reply_markup=_beby_close_kb(sheet, d1, d2))
+        except Exception:
+            logger.exception("Beby: не смог переслать накладную Анне")
 
 
 async def handle_beby(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/beby — как идёт текущий (незакрытый) период по беби-листам."""
+    """/beby — как идёт текущий (незакрытый) период по беби-листам (Анна)."""
     if not _is_from_anna(update):
+        # Владе сводку с прибылью не показываем — только напоминаем порядок
+        if _beby_sender_name(update.effective_user):
+            await update.message.reply_text(
+                "Пришлите PDF накладной сюда, в личку — я внесу её в таблицу. "
+                "Отчёт по периоду закрывает Анна.")
         return
     loop = asyncio.get_event_loop()
     try:
@@ -537,10 +585,7 @@ async def handle_beby(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logger.exception("Beby summary failed")
         await update.message.reply_text(f"❌ Ошибка: {e}")
         return
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-        f"Закрыть период {d1:%d.%m}–{d2:%d.%m}",
-        callback_data=f"beby:close:{sheet}:{d1:%Y-%m-%d}:{d2:%Y-%m-%d}")]])
-    await update.message.reply_text(text, reply_markup=kb)
+    await update.message.reply_text(text, reply_markup=_beby_close_kb(sheet, d1, d2))
 
 
 async def handle_beby_writeoff(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -592,8 +637,11 @@ def _beby_current():
 
 
 async def _beby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Кнопки беби: «Закрыть период» и подтверждение списаний."""
+    """Кнопки беби: «Закрыть период» и подтверждение списаний — только Анна."""
     query = update.callback_query
+    if not query.from_user or query.from_user.id != ANNA_USER_ID:
+        await query.answer("Период закрывает Анна.", show_alert=True)
+        return
     await query.answer()
     loop = asyncio.get_event_loop()
 

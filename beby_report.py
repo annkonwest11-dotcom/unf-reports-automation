@@ -606,7 +606,9 @@ def process_invoice(path, logistics=1000, today=None):
 
     Блок отчёта НЕ пишется: границы периода выбирает Анна (её периоды объединяют
     по несколько накладных) — закрытие идёт отдельной командой/кнопкой.
-    Возвращает (текст для Telegram, (лист, d1, d2) незакрытого периода)."""
+    Возвращает (что за накладная, сводка периода, (лист, d1, d2) незакрытого периода).
+    Две части раздельно: подтверждение накладной уходит тому, кто её прислал
+    (с 06.09.2026 это Влада), а сводку с прибылью бот шлёт только Анне."""
     inv = beby_invoice.parse(path)
     sheet = MONTHS[inv["date"].month - 1]
     ws = open_sheet(sheet)
@@ -615,7 +617,11 @@ def process_invoice(path, logistics=1000, today=None):
     packs = sum(p for _, p, _ in inv["items"])
     lines = [f"📄 Накладная №{inv['number']} от {inv['date']:%d.%m.%Y}"]
     if placed is None:
-        lines.append("Уже была в листе — повторно не вносил.")
+        # ★сверка идёт по ДАТЕ блока: две разные накладные за один день лист
+        # не различит, поэтому честно предупреждаем, а не молчим
+        lines.append(f"Накладная за {inv['date']:%d.%m} в листе «{sheet}» уже есть — "
+                     f"повторно не вносил. Если это другая накладная за тот же день, "
+                     f"скажите Анне: внесём руками.")
     else:
         lines.append(f"Внесена в «{sheet}»: {len(inv['items'])} позиций, "
                      f"{packs} пачек, {inv['total']:,.0f} ₽".replace(",", " "))
@@ -624,9 +630,8 @@ def process_invoice(path, logistics=1000, today=None):
     ws = open_sheet(sheet)                        # перечитать после вставки
     # период считаем по сегодняшний день: накладная может прийти задним числом
     d1, d2 = current_period(ws, max(today or date.today(), inv["date"]))
-    lines.append("")
-    lines.append(period_summary(sheet, d1, d2, logistics, prefix="Текущий период — "))
-    return "\n".join(lines), (sheet, d1, d2)
+    summary = period_summary(sheet, d1, d2, logistics, prefix="Текущий период — ")
+    return "\n".join(lines), summary, (sheet, d1, d2)
 
 
 def main():
@@ -643,8 +648,8 @@ def main():
     ap.add_argument("--logistics", type=float, default=1000, help="логистика за период, ₽")
     a = ap.parse_args()
     if a.invoice:
-        text, _ = process_invoice(os.path.expanduser(a.invoice), a.logistics)
-        print(text)
+        head, summary, _ = process_invoice(os.path.expanduser(a.invoice), a.logistics)
+        print(head + "\n\n" + summary)
         return
     if not (a.d1 and a.d2):
         ap.error("нужны --from и --to (или --invoice)")
