@@ -24,8 +24,8 @@ import logging
 from collections import defaultdict
 from datetime import datetime
 
-from sync_odata import (BASES, SHEET_BASES, ALIASES, DATA_START_ROW, _fetch_odata, _open_spreadsheet,
-                        live_bases,
+from sync_odata import (BASES, SHEET_BASES, ALIASES, DATA_START_ROW, _TRANSFER_TAIL,
+                        _fetch_odata, _open_spreadsheet, live_bases,
                         _parse_settings_period, aggregate_balances, norm_name)
 
 logger = logging.getLogger(__name__)
@@ -40,8 +40,14 @@ _ALIAS_NORM = {norm_name(k): v for k, v in ALIASES.items()}
 
 
 def canon(name):
-    """Имя карточки 1С → ключ строки листа (склеивает ЭДО/dsbx/счёт-дубли)."""
-    nn = norm_name(name)
+    """Имя карточки 1С → ключ строки листа (склеивает ЭДО/dsbx/счёт-дубли).
+
+    ★Сначала срезаем пометку о переводе между базами («… НА ИП ВОЛОДИХИНА»,
+    «… с 10.08.26 на ПЕРФИЛЬЕВ»): без этого переведённый клиент выглядел новой
+    карточкой и выпадал из беби-вычета — так за август терялись SAVVA (56 200)
+    и ЛИМОНЧИНО (10 940), разбор 05.09.2026.
+    """
+    nn = norm_name(_TRANSFER_TAIL.sub("", str(name or "")))
     return norm_name(_ALIAS_NORM[nn]) if nn in _ALIAS_NORM else nn
 
 

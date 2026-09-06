@@ -45,8 +45,9 @@ import requests
 import urllib3
 
 # склейка карточек одного контрагента — общая с взаиморасчётами и дебиторкой
-from sync_odata import (_TRANSFER_TAIL, group_same_client, key_tokens as _key_tokens,
-                        same_client as _same_client)
+from sync_odata import (ALIASES, _TRANSFER_TAIL, group_same_client,
+                        key_tokens as _key_tokens, same_client as _same_client,
+                        norm_name as _norm_name)
 
 try:
     from dotenv import load_dotenv
@@ -94,25 +95,32 @@ OVERDUE_RATIO = 1.5  # во сколько раз пропущено больш�
 LOST_TASKS = False
 MAX_CHECKLIST = 15
 # У Алёны клиентов заметно больше (сопровождение почти всех ресторанов), ей —
-# больше пунктов: решение Анны 03.09.2026 «у всех 15, у Алёны до 20».
-MAX_CHECKLIST_BY_MANAGER = {"Алена Черкашина": 20}
+# больше пунктов: решение Анны 03.09.2026 «у всех 15, у Алёны до 20», поднято
+# до 25 (05.09.2026), когда на неё перевели клиентов Влады, Анны и фирмы.
+MAX_CHECKLIST_BY_MANAGER = {"Алена Черкашина": 25}
 # ★17.08: порог был 21 день, и клиент, переставший заказывать, просто исчезал из
 # отчёта — чем дольше молчал, тем меньше его было видно. Так терялись 26 клиентов,
 # среди них Крабы Кутабы (130 тыс.), 16 тонн Пресня (88 тыс.), Милтон Грин (78 тыс.).
 
 # --- маршрутизация задач ---
 # менеджер из справочника → на кого реально ставим задачу
-REROUTE = {"Валерия Абрамова": "Владислава Герасимчук"}
+# ★★★Решение Анны 05.09.2026: «всех, кого ставили на Владу и на меня, ставим на
+# Алёну». Влада и Анна из адресатов задач по заказам выведены — их клиенты, клиенты
+# уволенной Абрамовой и все нераспределённые идут Алёне; фирмы тоже на неё.
+REROUTE = {"Валерия Абрамова": "Алена Черкашина",
+           "Владислава Герасимчук": "Алена Черкашина",
+           "Анна Кононенко": "Алена Черкашина",
+           "Анна Кононенко (РОП)": "Алена Черкашина"}
 # исполнители в Битриксе
 MANAGER_IDS = {"Анна Кононенко": 7, "Владислава Герасимчук": 17,
                "Дарья Вольнова": 15, "Ксения Наныкина": 20,
                "Алена Черкашина": 11}
-FALLBACK_MANAGER = "Анна Кононенко"   # куда девать нераспределённых
+FALLBACK_MANAGER = "Алена Черкашина"   # куда девать нераспределённых (Анна, 05.09.2026)
 SKIP_TYPES = {"Конкурент", "Закупки"}
 # «Фирмы» (тип в справочнике) ведёт Анна отдельной задачей — приоритет над менеджером
 FIRM_TYPE = "Фирма"
 FIRM_GROUP = "ФИРМЫ"
-FIRM_ASSIGNEE = "Анна Кононенко"
+FIRM_ASSIGNEE = "Алена Черкашина"
 
 
 # ---------- 1С OData ----------
@@ -173,6 +181,15 @@ def fetch_orders(today):
 
 # ---------- склейка карточек одного клиента ----------
 
+def _norm_alias(name, orders):
+    """Имя из ALIASES → имя карточки, как оно пришло из 1С (с точностью до пробелов)."""
+    target = _norm_name(name)
+    for n in orders:
+        if _norm_name(n) == target:
+            return n
+    return None
+
+
 def merge_cards(orders, base_of):
     """Заказы с карточек-двойников — на одного клиента.
 
@@ -185,8 +202,22 @@ def merge_cards(orders, base_of):
     оставляем как есть — лучше лишняя строка, чем перепутанные клиенты.
     Имя и база берутся у карточки со свежим заказом (актуальной).
     """
+    groups = list(group_same_client(orders).values())
+    # Пары, связанные вручную в ALIASES: клиент переехал на другую карточку, но
+    # по именам их объединять нельзя (запрет вложенности от 17.08). Досклеиваем
+    # такие группы точечно — например Angel Cakes, старая карточка и новая.
+    idx = {n: i for i, g in enumerate(groups) for n in g}
+    for raw, target in ALIASES.items():
+        i, j = idx.get(_norm_alias(raw, orders)), idx.get(_norm_alias(target, orders))
+        if i is not None and j is not None and i != j:
+            groups[i] = groups[i] + groups[j]
+            for n in groups[j]:
+                idx[n] = i
+            groups[j] = []
     merged, merged_base, cards = defaultdict(list), {}, {}
-    for members in group_same_client(orders).values():
+    for members in groups:
+        if not members:
+            continue
         # актуальная карточка — та, где заказывали последней
         main = max(members, key=lambda n: max(d for d, _ in orders[n]))
         for n in members:
@@ -322,11 +353,25 @@ def load_directory(gc):
     return by_full, by_brand, by_ent, recs
 
 
+# Имя карточки 1С → имя строки в таблице. Тот же словарь, по которому
+# `sync_odata` сводит суммы в листы ДАННЫЕ: в 1С клиента могут звать
+# «УГОЛЕК ООО (АНИЧА)», а в СПРАВОЧНИКЕ он «АНИЧА ООО (Уголёк)». Без этого
+# ритм не находил ответственного и слал задачу в общий котёл (30 клиентов
+# на 808 тыс. оборота, разбор 05.09.2026).
+_ALIAS_BY_NORM = {_norm_name(k): v for k, v in ALIASES.items()}
+
+
 def lookup(name, idx):
     by_full, by_brand, by_ent, recs = idx
     k = _norm(name)
     if k in by_full:
         return by_full[k]
+    # то же имя, но записанное так, как оно значится в таблице
+    alias = _ALIAS_BY_NORM.get(_norm_name(name))
+    if alias:
+        ka = _norm(alias)
+        if ka in by_full:
+            return by_full[ka]
     b, e = _brand(name), _entity(name)
     for key, table in ((b, by_brand), (e, by_ent), (b, by_ent)):
         if key in table and len(table[key]) == 1:

@@ -180,23 +180,24 @@ class TestShiftWriting(unittest.TestCase):
         self.assertEqual(got.get(14), "")
 
     def test_soprovozhdenie_budniy_firmy(self):
-        # Фирмы дают подработку в ЛЮБОЙ день (Анна, 2026-07-11): будни → осн.2500 + фирмы 1800
+        # ★Анна 05.09.2026: за фирмы в БУДНИ не платим (было 1800) — только осн.смена.
         got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: будний\nФирмы: да")
         self.assertEqual(got.get(7), "2500")
-        self.assertEqual(got.get(14), "1800")
+        self.assertEqual(got.get(14), "")
 
     def test_soprovozhdenie_vyhodnoy_firmy_2tel(self):
         got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: выходной\nФирмы: да\nЗаказы выходные: 2")
         self.assertEqual(got.get(7), "")
-        self.assertEqual(got.get(14), "3900")  # 1800 фирмы + 2100 тел2
+        self.assertEqual(got.get(14), "2800")  # 1000 фирмы (вых) + 1800 заказы
 
     def test_soprovozhdenie_vyhodnoy_rest_1tel(self):
         got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: выходной\nФирмы: нет\nЗаказы выходные: 1")
         self.assertEqual(got.get(14), "1800")
 
     def test_soprovozhdenie_vyhodnoy_rest_2tel(self):
+        # ★Анна 05.09.2026: надбавка за второй телефон убрана — 1800 при любом их числе
         got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: выходной\nФирмы: нет\nЗаказы выходные: 2")
-        self.assertEqual(got.get(14), "2100")
+        self.assertEqual(got.get(14), "1800")
 
     def test_soprovozhdenie_budniy_dop_tel(self):
         got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: будний\nФирмы: нет\nЗаказы будние: да")
