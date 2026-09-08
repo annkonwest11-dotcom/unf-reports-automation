@@ -103,7 +103,7 @@ def fetch_oborot_by_group(base_id, start, end, clients):
         group = folders.get(n.get("Parent_Key"), "")
         is_beby[n["Ref_Key"]] = BEBY_MARK in name and group not in NOT_BEBY_GROUPS
     ctg = {c["Ref_Key"]: c.get("Description", "")
-           for c in _fetch_odata(base_id, "Catalog_Контрагенты")}
+           for c in _fetch_odata(base_id, "Catalog_Контрагенты?$select=Ref_Key,Description")}
     out = defaultdict(lambda: [0.0, 0.0])
     for r in _fetch_odata(base_id, "AccumulationRegister_Продажи/Turnovers("
                                    f"StartPeriod={start},EndPeriod={end})"):
@@ -118,7 +118,7 @@ def fetch_oborot_by_group(base_id, start, end, clients):
 def fetch_pay(base_id, start, end, clients):
     """{canon: оплаты расчётного месяца} — чтобы не заводить строки без движений."""
     ctg = {c["Ref_Key"]: c.get("Description", "")
-           for c in _fetch_odata(base_id, "Catalog_Контрагенты")}
+           for c in _fetch_odata(base_id, "Catalog_Контрагенты?$select=Ref_Key,Description")}
     rows = _fetch_odata(base_id, "AccumulationRegister_РасчетыСПокупателями/BalanceAndTurnovers("
                                  f"StartPeriod={start},EndPeriod={end})")
     out = defaultdict(float)

@@ -28,6 +28,7 @@ import base64
 import logging
 import os
 import re
+import time
 from collections import defaultdict
 from datetime import datetime
 
@@ -251,6 +252,34 @@ def _base_url(base_id):
     return f"https://base.42clouds.com/unf/{base_id}/odata/standard.odata/"
 
 
+ODATA_RETRIES = 3
+ODATA_RETRY_PAUSE = 3      # сек между попытками
+
+
+def _odata_get(url, headers, entity, base_id):
+    """Один GET к OData с переспросом при обрыве связи.
+
+    ★42clouds иногда рвёт ответ на полпути (ChunkedEncodingError «IncompleteRead»)
+    — ловилось на тяжёлых выборках вроде полного Catalog_Контрагенты (08.09.2026
+    из-за этого не запускался sync_beby). Сетевой сбой переспрашиваем, ошибку
+    самой 1С (не-200) отдаём наверх сразу.
+    """
+    for attempt in range(1, ODATA_RETRIES + 1):
+        try:
+            resp = requests.get(url, headers=headers, timeout=60, verify=False)
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    f"OData {resp.status_code} для {entity[:60]} (база {base_id})"
+                )
+            return resp.json()
+        except requests.exceptions.RequestException as e:
+            if attempt == ODATA_RETRIES:
+                raise
+            logger.warning("OData %s (база %s): %s — попытка %d из %d",
+                           entity[:60], base_id, e, attempt, ODATA_RETRIES)
+            time.sleep(ODATA_RETRY_PAUSE)
+
+
 def _fetch_odata(base_id, entity):
     """Тянет сущность OData целиком, разворачивая пагинацию @odata.nextLink."""
     url = _base_url(base_id) + entity
@@ -258,12 +287,7 @@ def _fetch_odata(base_id, entity):
     headers = _auth_headers()
     out = []
     while url:
-        resp = requests.get(url, headers=headers, timeout=60, verify=False)
-        if resp.status_code != 200:
-            raise RuntimeError(
-                f"OData {resp.status_code} для {entity[:60]} (база {base_id})"
-            )
-        data = resp.json()
+        data = _odata_get(url, headers, entity, base_id)
         out.extend(data.get("value", []))
         url = data.get("@odata.nextLink")
     return out
