@@ -26,7 +26,8 @@ from datetime import datetime
 
 from sync_odata import (BASES, SHEET_BASES, ALIASES, DATA_START_ROW, _TRANSFER_TAIL,
                         _fetch_odata, _open_spreadsheet, live_bases,
-                        _parse_settings_period, aggregate_balances, norm_name)
+                        _parse_settings_period, aggregate_balances, norm_name,
+                        build_token_index, soft_lookup)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,20 @@ def canon(name):
     """
     nn = norm_name(_TRANSFER_TAIL.sub("", str(name or "")))
     return norm_name(_ALIAS_NORM[nn]) if nn in _ALIAS_NORM else nn
+
+
+def to_client(cn, clients, tok_index):
+    """Ключ клиента из справочника для канона карточки 1С — точно или мягко.
+
+    ★08.09.2026: «СПОРТКОРТ ООО ЭДО адрес дост менять» в 1С и «СПОРТКОРТ ООО ЭДО»
+    в листе — одна точка (Марика и Медуза Лужники). Суммы в ДАННЫЕ ложатся верно:
+    `plan_updates` сводит такие имена мягким матчем по словам. А беби-синк знал
+    только точное имя и терял клиента МОЛЧА — Медуза с 26 000 беби-оборота просто
+    не появлялась в листе. Теперь тот же мягкий матч и здесь.
+    """
+    if cn in clients:
+        return cn
+    return soft_lookup(cn, tok_index)
 
 
 def _period(spreadsheet):
@@ -103,12 +118,13 @@ def fetch_oborot_by_group(base_id, start, end, clients):
         group = folders.get(n.get("Parent_Key"), "")
         is_beby[n["Ref_Key"]] = BEBY_MARK in name and group not in NOT_BEBY_GROUPS
     ctg = {c["Ref_Key"]: c.get("Description", "")
-           for c in _fetch_odata(base_id, "Catalog_Контрагенты")}
+           for c in _fetch_odata(base_id, "Catalog_Контрагенты?$select=Ref_Key,Description")}
     out = defaultdict(lambda: [0.0, 0.0])
+    tok_index = build_token_index(clients)
     for r in _fetch_odata(base_id, "AccumulationRegister_Продажи/Turnovers("
                                    f"StartPeriod={start},EndPeriod={end})"):
-        cn = canon(ctg.get(r.get("Контрагент_Key"), ""))
-        if cn not in clients:
+        cn = to_client(canon(ctg.get(r.get("Контрагент_Key"), "")), clients, tok_index)
+        if cn is None:
             continue
         out[cn][1 if is_beby.get(r.get("Номенклатура_Key")) else 0] += (
             r.get("СуммаTurnover", 0) or 0)
@@ -118,13 +134,14 @@ def fetch_oborot_by_group(base_id, start, end, clients):
 def fetch_pay(base_id, start, end, clients):
     """{canon: оплаты расчётного месяца} — чтобы не заводить строки без движений."""
     ctg = {c["Ref_Key"]: c.get("Description", "")
-           for c in _fetch_odata(base_id, "Catalog_Контрагенты")}
+           for c in _fetch_odata(base_id, "Catalog_Контрагенты?$select=Ref_Key,Description")}
     rows = _fetch_odata(base_id, "AccumulationRegister_РасчетыСПокупателями/BalanceAndTurnovers("
                                  f"StartPeriod={start},EndPeriod={end})")
     out = defaultdict(float)
+    tok_index = build_token_index(clients)
     for key, vals in aggregate_balances(rows).items():
-        cn = canon(ctg.get(key, ""))
-        if cn in clients:
+        cn = to_client(canon(ctg.get(key, "")), clients, tok_index)
+        if cn is not None:
             out[cn] += vals[2]
     return out
 
