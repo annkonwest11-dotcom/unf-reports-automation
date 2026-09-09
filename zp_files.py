@@ -25,7 +25,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from sync_odata import (BASES, SHEET_BASES, ALIASES, DATA_START_ROW, _contractor_names, _fetch_odata,
                         _open_spreadsheet, _parse_settings_period, aggregate_balances,
                         build_token_index, norm_name, soft_lookup)
-from zp_text import MONTHS, Sheet, big, num
+from zp_text import MONTHS, big, load_summary, num
 
 _ALIAS_NORM = {norm_name(k): v for k, v in ALIASES.items()}
 
@@ -173,7 +173,7 @@ def build_files(only=None, outdir=None):
     outdir = outdir or tempfile.mkdtemp(prefix="zp_files_")
     ss = _open_spreadsheet()
     start, end, month_label, year = _period(ss)
-    sh = Sheet(ss.worksheet("СВОДНАЯ_ЗП").get("A1:H175", value_render_option="UNFORMATTED_VALUE"))
+    sh = load_summary(ss)
 
     beby = {}
     for r in ss.worksheet("БЕБИ_ЛИСТЫ").get("A4:J23"):

@@ -14,6 +14,7 @@
          venv/bin/python zp_text.py --only Алена     — только по одному человеку
 """
 import argparse
+import logging
 import os
 import re
 import sys
@@ -24,6 +25,8 @@ from dotenv import load_dotenv
 
 from sync_odata import (BASES, SHEET_BASES, DATA_START_ROW, _open_spreadsheet,
                         _parse_settings_period)
+
+logger = logging.getLogger(__name__)
 
 MONTHS = ["ЯНВАРЬ", "ФЕВРАЛЬ", "МАРТ", "АПРЕЛЬ", "МАЙ", "ИЮНЬ",
           "ИЮЛЬ", "АВГУСТ", "СЕНТЯБРЬ", "ОКТЯБРЬ", "НОЯБРЬ", "ДЕКАБРЬ"]
@@ -77,8 +80,18 @@ def shifts_word(n):
 class Sheet:
     """Лист СВОДНАЯ_ЗП: доступ к блокам сотрудников по подписям строк."""
 
-    def __init__(self, grid):
-        self.grid = [(r or []) + [""] * (8 - len(r or [])) for r in grid]
+    NOTE_COL = 2   # заметку вешаем на колонку C — там сама сумма компонента
+
+    def __init__(self, grid, notes=None):
+        notes = notes or []
+        self.grid = []
+        for i, r in enumerate(grid):
+            row = list(r or [])[:8]
+            row += [""] * (8 - len(row))
+            nr = list((notes[i] if i < len(notes) else []) or [])[:8]
+            nr += [""] * (8 - len(nr))
+            row.append([str(x or "").strip() for x in nr])
+            self.grid.append(row)
 
     def find(self, text, col=0, start=0):
         for i in range(start, len(self.grid)):
@@ -105,8 +118,8 @@ class Sheet:
         return self.grid[head:end + 1], num(self.grid[end][2])
 
     @staticmethod
-    def row(block, label):
-        """Строка блока по подписи в колонке A → (C, D, E, B-подпись).
+    def _match(block, label):
+        """Строка блока по подписи в колонке A, иначе None.
 
         Точное совпадение подписи важнее вхождения: в блоке РОП есть и «Бонус»,
         и «Бонус %», и «Бонус (ставка по %плана…)» — поиск по подстроке путал их.
@@ -116,8 +129,46 @@ class Sheet:
             for r in block:
                 a = str(r[0]).strip().lower()
                 if (a == low) if exact else (low in a):
-                    return num(r[2]), num(r[3]), num(r[4]), str(r[1])
-        return 0.0, 0.0, 0.0, ""
+                    return r
+        return None
+
+    @staticmethod
+    def row(block, label):
+        """Строка блока по подписи в колонке A → (C, D, E, B-подпись)."""
+        r = Sheet._match(block, label)
+        if r is None:
+            return 0.0, 0.0, 0.0, ""
+        return num(r[2]), num(r[3]), num(r[4]), str(r[1])
+
+    @staticmethod
+    def note(block, label):
+        """Текстовый комментарий строки: колонка B, а если пусто — C.
+
+        Комментарий к доп.премии Анна пишет то в B (Дарья, Алёна), то в C
+        (Влада) — раньше читали только B, и у Влады он молча терялся:
+        в сообщении оставалось голое «премия».
+        """
+        r = Sheet._match(block, label)
+        if r is None:
+            return ""
+        for col in (1, 2):
+            t = str(r[col]).strip()
+            if t and num(t) == 0.0:      # число в этой ячейке — не комментарий
+                return t
+        return ""
+
+    @staticmethod
+    def cell_note(block, label):
+        """Заметка Google Sheets, повешенная на сумму строки (колонка C).
+
+        Так разовое пояснение к компоненту («половина — полмесяца отсутствия»)
+        едет в рассылку прямо из таблицы: Анна вешает заметку на ячейку, и текст
+        сам попадает в сообщение — не трогая ни формулу, ни подпись строки.
+        """
+        r = Sheet._match(block, label)
+        if r is None or len(r) < 9:
+            return ""
+        return r[8][Sheet.NOTE_COL]
 
     def payments(self):
         """{ФИО: (итого, аванс_карта, аванс_нал, зп_карта, остаток_нал)}."""
@@ -164,8 +215,30 @@ def fact_by_manager(ss):
     return out
 
 
+def load_summary(ss):
+    """Лист СВОДНАЯ_ЗП со значениями и заметками ячеек.
+
+    Заметки тянем отдельным запросом (get_notes) — в values-выгрузке их нет,
+    а через них в рассылку едут разовые пояснения к суммам.
+    """
+    ws = ss.worksheet("СВОДНАЯ_ЗП")
+    values = ws.get("A1:H175", value_render_option="UNFORMATTED_VALUE")
+    try:
+        notes = ws.get_notes()
+    except Exception as e:               # заметки — украшение, без них текст живой
+        logger.warning("не смог прочитать заметки СВОДНОЙ: %s", e)
+        notes = []
+    return Sheet(values, notes)
+
+
 def line(sign, amount, comment):
     return f"{sign}{rub(amount)} ({comment})"
+
+
+def with_note(comment, note):
+    """Подпись компонента с пояснением из заметки ячейки, если оно там есть."""
+    note = (note or "").strip()
+    return f"{comment} — {note}" if note else comment
 
 
 def build_search(sh, name, month, facts, pay, new_plan_setting=0.0):
@@ -181,7 +254,7 @@ def build_search(sh, name, month, facts, pay, new_plan_setting=0.0):
     stories, _, _, _ = sh.row(block, "сторис")
     contest, _, _, _ = sh.row(block, "Конкурс")
     extra, _, extra_e, _ = sh.row(block, "Дополнительная премия")
-    _, _, _, note = sh.row(block, "Комментарий к доп.премии")
+    note = sh.note(block, "Комментарий к доп.премии")
     extra = extra or extra_e
 
     raw, adj = facts.get(name, (pays, pays))
@@ -228,7 +301,7 @@ def build_support(sh, name, month, facts, pay, plan):
     oper, _, _, _ = sh.row(block, "KPI рестораны — операц")
     plan_bonus, _, _, _ = sh.row(block, "KPI рестораны — план")
     extra, _, extra_e, _ = sh.row(block, "Дополнительная премия")
-    _, _, _, note = sh.row(block, "Комментарий к доп.премии")
+    note = sh.note(block, "Комментарий к доп.премии")
     extra = extra or extra_e
 
     raw, _ = facts.get(name, (base, base))
@@ -266,7 +339,7 @@ def build_rop(sh, name, month, pay, plans):
     # в этой же строке колонка E — база «оплаты ресторанов», от которой считают бонус
     pos_bonus, _, rest_base, _ = sh.row(block, "Бонус (ставка по %плана")
     extra, _, extra_e, _ = sh.row(block, "Дополнительная премия")
-    _, _, _, note = sh.row(block, "Комментарий к доп.премии")
+    note = sh.note(block, "Комментарий к доп.премии")
     extra = extra or extra_e
 
     out = [f"⭕️ЗП {SHORT[name]} ЗА {month} ⭕️",
@@ -305,7 +378,7 @@ def build_helper(sh, name, month, pay):
     projects, _, _, _ = sh.row(block, "Премия за проекты")
     logistics, _, _, _ = sh.row(block, "KPI администрирование")
     extra, _, extra_e, _ = sh.row(block, "Дополнительная премия")
-    _, _, _, note = sh.row(block, "Комментарий к доп.премии")
+    note = sh.note(block, "Комментарий к доп.премии")
     extra = extra or extra_e
     hires = sum(sh.row(block, lbl)[0] for lbl in
                 ("Найм: менеджер (7 раб. дней)", "Найм: менеджер (месяц)",
@@ -316,7 +389,8 @@ def build_helper(sh, name, month, pay):
     if extra_work:
         out.append(line("+", extra_work, "подработки в будни и выходные"))
     if smm:
-        out.append(line("+", smm, "оклад SMM"))
+        out.append(line("+", smm, with_note("оклад SMM",
+                                            sh.cell_note(block, "Оклад SMM"))))
     if content:
         out.append(line("+", content, "премия за контент"))
     if clients:
@@ -328,7 +402,9 @@ def build_helper(sh, name, month, pay):
     if projects:
         out.append(line("+", projects, "премия за проекты"))
     if logistics:
-        out.append(line("+", logistics, "KPI администрирование (логистика)"))
+        out.append(line("+", logistics,
+                        with_note("KPI администрирование (логистика)",
+                                  sh.cell_note(block, "KPI администрирование"))))
     if extra:
         out.append(line("+", extra, note.strip() or "премия"))
     return finish(out, total, name, pay)
@@ -370,7 +446,7 @@ def finish(out, total, name, pay):
 def build_texts(ss=None):
     """{ФИО: текст расчёта} по всем сотрудникам. Отсюда же берёт бот для команды /zp."""
     ss = ss or _open_spreadsheet()
-    sh = Sheet(ss.worksheet("СВОДНАЯ_ЗП").get("A1:H175", value_render_option="UNFORMATTED_VALUE"))
+    sh = load_summary(ss)
     settings = ss.worksheet("НАСТРОЙКИ").get("A1:D30", value_render_option="UNFORMATTED_VALUE")
     period = _parse_settings_period(ss)
     month = MONTHS[period[1] - 1] if period else ""
@@ -419,7 +495,7 @@ def official_zp_ready(ss=None):
     пометка «официальная зарплата — добавим 10-го».
     """
     ss = ss or _open_spreadsheet()
-    sh = Sheet(ss.worksheet("СВОДНАЯ_ЗП").get("A1:H175", value_render_option="UNFORMATTED_VALUE"))
+    sh = load_summary(ss)
     return any(vals[3] for vals in sh.payments().values())
 
 
@@ -430,7 +506,7 @@ def department_summary(ss=None):
     Возвращает HTML: моноширинный <pre>, иначе колонки в Telegram разъедутся.
     """
     ss = ss or _open_spreadsheet()
-    sh = Sheet(ss.worksheet("СВОДНАЯ_ЗП").get("A1:H175", value_render_option="UNFORMATTED_VALUE"))
+    sh = load_summary(ss)
     period = _parse_settings_period(ss)
     month = MONTHS[period[1] - 1] if period else ""
     pay = sh.payments()
@@ -469,7 +545,7 @@ def cash_summary(ss=None):
     Это колонка «Остаток 10 — наличными» таблицы выплат = ИТОГО минус авансы
     (и минус официальная часть, когда она проставлена)."""
     ss = ss or _open_spreadsheet()
-    sh = Sheet(ss.worksheet("СВОДНАЯ_ЗП").get("A1:H175", value_render_option="UNFORMATTED_VALUE"))
+    sh = load_summary(ss)
     period = _parse_settings_period(ss)
     month = MONTHS[period[1] - 1] if period else ""
     pay = sh.payments()
