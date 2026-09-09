@@ -539,6 +539,45 @@ def department_summary(ss=None):
     return "\n".join(out)
 
 
+def department_summary_plain(ss=None):
+    """Та же сводка выплат, но построчно, без моноширинной таблицы.
+
+    В MAX нет <pre>, и колонки из department_summary там разъезжаются — для
+    мессенджеров без моноширинного текста собираем человека в две строки.
+    """
+    ss = ss or _open_spreadsheet()
+    sh = load_summary(ss)
+    period = _parse_settings_period(ss)
+    month = MONTHS[period[1] - 1] if period else ""
+    pay = sh.payments()
+
+    lines = [f"📋 ТАБЛИЦА ВЫПЛАТ — {month}", ""]
+    totals = [0.0] * 5
+    for name, vals in pay.items():
+        if not any(vals):
+            continue
+        for i in range(5):
+            totals[i] += vals[i]
+        parts = [f"итого {big(vals[0])}"]
+        if vals[1]:
+            parts.append(f"аванс карта {big(vals[1])}")
+        if vals[2]:
+            parts.append(f"аванс нал {big(vals[2])}")
+        if vals[3]:
+            parts.append(f"ЗП карта {big(vals[3])}")
+        parts.append(f"остаток нал {big(vals[4])}")
+        lines += [SHORT.get(name, name), "   " + " | ".join(parts), ""]
+
+    fot = num(sh.grid[sh.find("ИТОГО ФОТ ЗА МЕСЯЦ")][2]) if sh.find("ИТОГО ФОТ") >= 0 else totals[0]
+    lines += [f"ИТОГО по отделу: {big(totals[0])}",
+              f"   авансы {big(totals[1] + totals[2])} | ЗП карта {big(totals[3])} | "
+              f"наличными 10-го {big(totals[4])}",
+              "", f"💰 ФОТ ЗА МЕСЯЦ: {big(fot)} ₽"]
+    if not totals[3]:
+        lines.append("Официальная ЗП («ЗП 9 — на карту») ещё не проставлена.")
+    return "\n".join(lines)
+
+
 def cash_summary(ss=None):
     """Отдельное сообщение: сколько кому отдать наличными 10 числа и общий итог.
 
