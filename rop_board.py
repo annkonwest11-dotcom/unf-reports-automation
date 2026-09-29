@@ -88,6 +88,14 @@ STAGE_STATUS = {
     "6": "out",                # Связаться позже
 }
 CLOSED_STAGES = {"WON", "LOSE", "UC_V53410", "1", "2", "3", "4", "5", "6"}
+STAGE_NAMES_FALLBACK = {
+    "NEW": "Новая дегустация", "UC_ZX1F5K": "РАЗОБРАТЬ!!!",
+    "UC_4B3C08": "Обратная связь получена", "PREPARATION": "Прайс и создание договора",
+    "UC_0LGKWV": "Первые заказы/контроль", "WON": "Закрепили сотрудничество/работаем",
+    "LOSE": "Другое", "UC_V53410": "Перестали работать", "1": "Цена",
+    "2": "Ассортимент", "3": "Качество", "4": "Передумали вводить",
+    "5": "Не вышли на ЛПР", "6": "Связаться позже",
+}
 STATUS_TITLES = {
     "push": "Дожать до заказа",
     "meet": "Встреча",
@@ -178,6 +186,17 @@ def fetch_deals():
                    "DATE_MODIFY", "COMMENTS", "OPPORTUNITY"],
         "order": {"DATE_MODIFY": "DESC"},
     })
+
+
+def fetch_stage_names():
+    """{STATUS_ID: название} стадий сделок — чтобы борд не врал, если их переименуют."""
+    try:
+        res = bitrix("crm.status.list",
+                     {"filter": {"ENTITY_ID": "DEAL_STAGE"}}).get("result") or []
+        return {x["STATUS_ID"]: x["NAME"] for x in res}
+    except Exception as exc:
+        logger.warning("Названия стадий не прочитаны: %s", exc)
+        return {}
 
 
 def fetch_users(ids):
@@ -400,7 +419,8 @@ def read_plans(spreadsheet):
     """
     values = spreadsheet.worksheet("НАСТРОЙКИ").get_all_values()
     plans = {"oborot": 0.0, "postup": 0.0, "new": 0.0,
-             "search_default": PLAN_SEARCH_DEFAULT, "personal": {}, "period": ""}
+             "search_default": PLAN_SEARCH_DEFAULT, "personal": {}, "support": {},
+             "period": ""}
     for row in values:
         who = (row[0] or "").strip() if len(row) > 0 else ""
         what = (row[1] or "").strip().lower() if len(row) > 1 else ""
@@ -424,12 +444,41 @@ def read_plans(spreadsheet):
             plans["search_default"] = val or PLAN_SEARCH_DEFAULT
         elif "новых клиентов" in what and val:
             plans["personal"][first_name(who)] = val
+        elif "оплаты ресторанов" in what and val:
+            # план менеджера сопровождения (НАСТРОЙКИ!C9 у Алёны) — ключ полным именем,
+            # как он написан в колонке G листов ДАННЫЕ_*
+            plans["support"][who.split("(")[0].strip()] = val
     return plans
 
 
-def support_manager_plan(spreadsheet):
-    """План оплат менеджера сопровождения (НАСТРОЙКИ) — для справки в борде."""
-    return None  # не используется борд-страницей, оставлено для ясности структуры
+def support_payments(spreadsheet, names):
+    """{имя: (оплаты до вычета беби, скорр. оплаты)} по ресторанам сопровождения.
+
+    Повторяет формулы СВОДНОЙ (блок сопровождения): суммируем листы ДАННЫЕ_* по
+    колонкам D (уменьшение долга = оплаты) и J (скорр. оплаты, из которых вычтены
+    беби-листы) там, где G — этот менеджер, а H = «Ресторан». % плана в ЗП считается
+    от оплат ДО вычета беби — так же, как в файле взаиморасчётов менеджера.
+    """
+    D, J, G, H = 3, 9, 6, 7          # колонки листа ДАННЫЕ_* (данные с 4-й строки)
+    result = {n: [0.0, 0.0] for n in names}
+    for cfg in so.SHEET_BASES.values():
+        sheet_name = cfg.get("sheet_name")
+        if not sheet_name:
+            continue
+        try:
+            rows = spreadsheet.worksheet(sheet_name).get_all_values()
+        except Exception as exc:
+            logger.warning("Лист %s недоступен: %s", sheet_name, exc)
+            continue
+        for row in rows[so.DATA_START_ROW - 1:]:
+            if len(row) <= J:
+                continue
+            who = (row[G] or "").strip()
+            if who not in result or (row[H] or "").strip() != "Ресторан":
+                continue
+            result[who][0] += num(row[D])
+            result[who][1] += num(row[J])
+    return {n: (round(v[0]), round(v[1])) for n, v in result.items()}
 
 
 # ─── 1С: оборот отдела и оборот клиентов по менеджеру поиска ──────────────────
@@ -520,6 +569,17 @@ def build(today=None, use_llm=True):
         logger.warning("Поступления из кассы недоступны: %s", exc)
         postup, postup_error = None, str(exc)[:200]
 
+    support = []
+    try:
+        facts = support_payments(salary, list(plans["support"]))
+        for who, plan in plans["support"].items():
+            raw, adj = facts.get(who, (0, 0))
+            support.append({"name": first_name(who), "full": who, "plan": round(plan),
+                            "fact": raw, "fact_adj": adj,
+                            "pct": round(raw / plan, 4) if plan else None})
+    except Exception as exc:
+        logger.warning("Оплаты сопровождения не посчитаны: %s", exc)
+
     try:
         oborot_mgr, oborot_unmatched = oborot_by_search_manager(salary, today)
     except Exception as exc:
@@ -534,33 +594,37 @@ def build(today=None, use_llm=True):
 
     tastings = defaultdict(list)        # дегустации, отправленные в этом месяце
     active_rows = []                    # сделки в работе (движение в этом месяце)
-    stuck = 0                           # активные без движения дольше 30 дней
+    stuck_rows = []                     # активные без движения дольше 30 дней
     won_month = []                      # закрепили сотрудничество в этом месяце
     seen_titles = defaultdict(list)
-    tests = 0                           # тестовые карточки CRM — в борд не идут
+    tests = []                          # тестовые карточки CRM — в борд не идут
+    stage_names = {**STAGE_NAMES_FALLBACK, **fetch_stage_names()}
 
     for d in deals:
         stage = d["STAGE_ID"]
         title = (d["TITLE"] or "").strip()
         created = d["DATE_CREATE"][:10]
         modified = d["DATE_MODIFY"][:10]
+        who = users.get(str(d["ASSIGNED_BY_ID"]), "")
         if TEST_TITLE.search(title):
             if created >= period_iso or modified >= period_iso:
-                tests += 1
+                tests.append({"id": d["ID"], "title": title[:60],
+                              "mgr": first_name(who) if who != "без менеджера" else who})
             continue
-        who = users.get(str(d["ASSIGNED_BY_ID"]), "")
         short = who if who == "без менеджера" else first_name(who)
         note = last_note(d.get("COMMENTS"))
         if created >= period_iso:
             tastings[short or "без менеджера"].append(
                 {"id": d["ID"], "title": title[:60],
                  "created": created, "stage": stage})
-            seen_titles[norm_title(title)].append(d["ID"])
+            seen_titles[norm_title(title)].append(
+                {"id": d["ID"], "title": title[:60], "mgr": short})
         if stage == "WON" and modified >= period_iso:
             won_month.append({"title": title[:60], "mgr": short})
         if stage not in CLOSED_STAGES and modified < (
                 today - timedelta(days=30)).strftime("%Y-%m-%d"):
-            stuck += 1
+            stuck_rows.append({"id": d["ID"], "title": title[:60], "mgr": short,
+                               "modified": modified})
         if modified >= period_iso and stage != "WON":
             dt = note_date(note, today)
             last_touch = max([x for x in (dt, datetime.strptime(modified, "%Y-%m-%d"))
@@ -570,6 +634,7 @@ def build(today=None, use_llm=True):
                 "title": title[:60],
                 "mgr": short or "—",
                 "stage": stage,
+                "stage_name": stage_names.get(stage, stage),
                 "status": STAGE_STATUS.get(stage, "none"),
                 "note": note,
                 "empty": not note,
@@ -643,8 +708,8 @@ def build(today=None, use_llm=True):
     managers.sort(key=lambda m: -m["sales"])
 
     # ─ дубли карточек в воронке за месяц
-    dupes = [{"title": t, "ids": ids} for t, ids in seen_titles.items()
-             if len(ids) > 1 and t]
+    dupes = [{"title": cards[0]["title"], "cards": cards}
+             for t, cards in seen_titles.items() if len(cards) > 1 and t]
 
     # ─ «на что обратить внимание»
     flags = []
@@ -665,8 +730,20 @@ def build(today=None, use_llm=True):
                       "text": "Сильно ниже темпа по новым продажам: "
                               + ", ".join(f"{m['name']} "
                                           f"{round(m['sales'] / m['plan'] * 100)}%"
-                                          for m in behind)})
+                                          for m in behind),
+                      "items": [{"title": m["name"],
+                                 "sub": f"{m['sales']:,.0f} ₽ из {m['plan']:,.0f} — "
+                                        f"не хватает {m['plan'] - m['sales']:,.0f} ₽"
+                                        .replace(",", " ")}
+                                for m in behind]})
     live_rows = [r for r in active_rows if r["status"] not in ("out", "won")]
+    for sup in support:
+        if sup["pct"] is not None and sup["pct"] < pace * 0.9:
+            flags.append({"kind": "warn",
+                          "text": f"Оплаты ресторанов {sup['name']}: "
+                                  f"{sup['pct'] * 100:.0f}% плана при темпе месяца "
+                                  f"{pace * 100:.0f}%"})
+
     empty_cards = [r for r in live_rows if r["empty"]]
     if empty_cards:
         by = defaultdict(int)
@@ -675,24 +752,50 @@ def build(today=None, use_llm=True):
         flags.append({"kind": "warn",
                       "text": f"Карточек без информации — {len(empty_cards)}: "
                               + ", ".join(f"{k} {v}" for k, v in
-                                          sorted(by.items(), key=lambda x: -x[1]))})
+                                          sorted(by.items(), key=lambda x: -x[1])),
+                      "items": [{"id": r["id"], "title": r["title"],
+                                 "sub": f"{r['mgr']} · стадия "
+                                        f"«{stage_names.get(r['stage'], r['stage'])}»"}
+                                for r in sorted(empty_cards,
+                                                key=lambda r: (r["mgr"], r["title"]))]})
     stale_rows = [r for r in live_rows if (r["days"] or 0) > STALE_DAYS]
     if stale_rows:
         flags.append({"kind": "warn",
                       "text": f"Без движения дольше {STALE_DAYS} дней — "
-                              f"{len(stale_rows)} сделок в работе"})
+                              f"{len(stale_rows)} сделок в работе",
+                      "items": [{"id": r["id"], "title": r["title"],
+                                 "sub": f"{r['mgr']} · {r['days']} дн. без движения · "
+                                        f"{r['action']}"}
+                                for r in sorted(stale_rows,
+                                                key=lambda r: -(r["days"] or 0))]})
     if dupes:
         flags.append({"kind": "warn",
-                      "text": f"Дубли карточек в воронке: "
-                              + "; ".join(d["title"] for d in dupes[:5])})
+                      "text": f"Дубли карточек в воронке — {len(dupes)}: "
+                              + "; ".join(d["title"] for d in dupes[:5]),
+                      "items": [{"title": d["title"],
+                                 "sub": f"{len(d['cards'])} карточки — оставить одну",
+                                 "links": [{"id": c["id"],
+                                            "label": f"{c['title']} ({c['mgr']})"}
+                                           for c in d["cards"]]}
+                                for d in dupes]})
     if tests:
         flags.append({"kind": "info",
-                      "text": f"Тестовых карточек в воронке за месяц: {tests} — "
-                              f"в борде не показаны"})
-    if stuck:
+                      "text": f"Тестовых карточек в воронке за месяц: {len(tests)} — "
+                              f"в борде не показаны",
+                      "items": [{"id": t["id"], "title": t["title"], "sub": t["mgr"]}
+                                for t in tests]})
+    if stuck_rows:
+        shown = sorted(stuck_rows, key=lambda r: r["modified"], reverse=True)[:60]
+        note = (f" Показаны {len(shown)} самых свежих из {len(stuck_rows)}."
+                if len(shown) < len(stuck_rows) else "")
         flags.append({"kind": "info",
-                      "text": f"В воронке {stuck} открытых сделок без движения "
-                              f"больше 30 дней — их не видно в работе месяца"})
+                      "text": f"В воронке {len(stuck_rows)} открытых сделок без движения "
+                              f"больше 30 дней — их не видно в работе месяца." + note,
+                      "items": [{"id": r["id"], "title": r["title"],
+                                 "sub": f"{r['mgr']} · последнее движение "
+                                        f"{r['modified'][8:10]}.{r['modified'][5:7]}."
+                                        f"{r['modified'][:4]}"}
+                                for r in shown]})
 
     data = {
         "generated": datetime.now().strftime("%d.%m.%Y %H:%M"),
@@ -715,6 +818,7 @@ def build(today=None, use_llm=True):
                 "won": len(won_month),
             },
         },
+        "support": support,
         "oborot_bases": oborot_bases,
         "oborot_unmatched": oborot_unmatched,
         "managers": managers,
@@ -759,6 +863,11 @@ def summary_text(data, url=None):
         line("Оборот", k["oborot"]["fact"], k["oborot"]["plan"]),
         line("Оплаты", k["postup"]["fact"], k["postup"]["plan"]),
         line("Новые продажи", k["new"]["fact"], k["new"]["plan"]),
+    ] + [
+        f"Оплаты ресторанов {s['name']}: {s['fact']:,.0f} ₽ · "
+        f"{s['pct'] * 100:.0f}% плана".replace(",", " ")
+        for s in data.get("support", []) if s["pct"] is not None
+    ] + [
         f"Дегустации: {k['tastings']['count']} · в работе "
         f"{k['tastings']['in_work']} · на дожиме {k['tastings']['push']} · "
         f"без инфо {k['tastings']['empty']}",
