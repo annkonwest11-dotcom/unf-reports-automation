@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Продажи GREENCH — борд РОПа</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&family=Onest:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  color-scheme:light;
+  --bg:#F4F6F1; --surface:#FFFFFF; --sunk:#EDF1EA;
+  --ink:#17201A; --ink2:#465249; --muted:#768178; --line:#DFE4DB;
+  --accent:#2E7D4F; --accent-soft:#DDEDE1;
+  --good:#2E8540; --good-bg:#E1F1E4; --warn:#9A6A12; --warn-bg:#F7EDD6;
+  --crit:#B83A26; --crit-bg:#F8E1DC; --plan:#17201A;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#101511; --surface:#171E19; --sunk:#1D2620;
+    --ink:#E6ECE6; --ink2:#B2BDB4; --muted:#849086; --line:#29332C;
+    --accent:#5FBF7F; --accent-soft:#1E3326;
+    --good:#6CC985; --good-bg:#1B3222; --warn:#E0B458; --warn-bg:#352A14;
+    --crit:#F08A74; --crit-bg:#3A1F19; --plan:#E6ECE6;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#101511; --surface:#171E19; --sunk:#1D2620;
+  --ink:#E6ECE6; --ink2:#B2BDB4; --muted:#849086; --line:#29332C;
+  --accent:#5FBF7F; --accent-soft:#1E3326;
+  --good:#6CC985; --good-bg:#1B3222; --warn:#E0B458; --warn-bg:#352A14;
+  --crit:#F08A74; --crit-bg:#3A1F19; --plan:#E6ECE6;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Onest",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:15px;line-height:1.45}
+img{max-width:100%}
+[hidden]{display:none!important}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 56px;display:flex;flex-direction:column;gap:28px}
+h1,h2{font-family:"Unbounded","Onest",system-ui,sans-serif;font-weight:600;letter-spacing:-.01em;text-wrap:balance;margin:0}
+h1{font-size:26px}
+h2{font-size:17px}
+.num{font-variant-numeric:tabular-nums}
+.eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px 24px}
+.hmeta{color:var(--ink2);font-size:14px}
+.pace{display:inline-flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-size:13px;color:var(--ink2)}
+.pace b{color:var(--ink)}
+.pace i{width:10px;height:2px;background:var(--plan);display:inline-block}
+
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 16px 14px;display:flex;flex-direction:column;gap:10px}
+.kpi .v{font-size:26px;font-weight:700;letter-spacing:-.01em}
+.kpi .p{font-size:13px;color:var(--ink2)}
+.meter{position:relative;height:8px;background:var(--sunk);border-radius:4px}
+.meter .f{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:4px}
+.meter .t{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--plan);border-radius:1px}
+.kfoot{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
+.chip.good{background:var(--good-bg);color:var(--good)}
+.chip.warn{background:var(--warn-bg);color:var(--warn)}
+.chip.crit{background:var(--crit-bg);color:var(--crit)}
+.chip.info{background:var(--sunk);color:var(--ink2)}
+
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.phead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.sub{color:var(--muted);font-size:13px}
+
+.flags{display:flex;flex-direction:column;gap:8px}
+.flag{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;font-size:14px;color:var(--ink2);background:var(--sunk);border-radius:8px;padding:10px 12px}
+.flag b{color:var(--ink)}
+.flag details{min-width:0}
+.flag summary{cursor:pointer;list-style:none;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.flag summary::-webkit-details-marker{display:none}
+.flag summary::after{content:"показать ▾";font-size:12px;font-weight:600;color:var(--accent);white-space:nowrap}
+.flag details[open] summary::after{content:"свернуть ▴"}
+.flag summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+.flist{list-style:none;margin:10px 0 2px;padding:0;display:flex;flex-direction:column;gap:7px}
+.flist li{display:flex;flex-direction:column;gap:2px;padding-left:12px;border-left:2px solid var(--line)}
+.flist .ft{font-weight:600;color:var(--ink)}
+.flist .fs{font-size:13px;color:var(--muted)}
+.flist a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--line)}
+.flist a:hover{border-bottom-color:var(--accent)}
+.flist .dup{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px;margin-top:2px}
+
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:92px 1fr 136px;align-items:center;gap:10px}
+.bar .n{font-weight:600;font-size:14px}
+.track{position:relative;height:18px;background:var(--sunk);border-radius:4px}
+.track .f{position:absolute;left:0;top:2px;bottom:2px;background:var(--accent);border-radius:0 4px 4px 0}
+.track .pl{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--plan)}
+.bar .val{text-align:right;font-size:13px;display:flex;justify-content:flex-end;align-items:center;gap:6px}
+.bar:hover .f,.bar:focus-visible .f{filter:brightness(1.12)}
+.bar:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+.axis{display:grid;grid-template-columns:92px 1fr 136px;gap:10px;font-size:11px;color:var(--muted)}
+.axis .sc{position:relative;height:14px}
+.axis .sc span{position:absolute;transform:translateX(-50%)}
+.axis .sc span:first-child{transform:none}
+.note{font-size:13px;color:var(--ink2);background:var(--sunk);border-radius:8px;padding:10px 12px}
+.note b{color:var(--ink)}
+
+.tscroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:680px;font-size:14px}
+th{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);font-weight:600;text-align:right;padding:8px 10px;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:right}
+tr:last-child td{border-bottom:0}
+tfoot td{font-weight:700;border-top:1px solid var(--ink2)}
+td.na{color:var(--muted)}
+
+.tgrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px}
+.tcol{display:flex;flex-direction:column;gap:6px;min-width:0}
+.tcol h3{margin:0;font-size:14px;font-weight:700;display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid var(--line);padding-bottom:6px}
+.tcol ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px;font-size:14px;color:var(--ink2)}
+.tcol li small{color:var(--muted)}
+.tcol a{color:inherit;text-decoration:none;border-bottom:1px dotted var(--line)}
+.tcol a:hover{color:var(--ink);border-bottom-color:var(--accent)}
+
+.filters{display:flex;flex-wrap:wrap;gap:8px}
+.fb{font:inherit;font-size:13px;border:1px solid var(--line);background:var(--surface);color:var(--ink2);border-radius:999px;padding:5px 12px;cursor:pointer;display:inline-flex;gap:6px;align-items:center}
+.fb span{color:var(--muted);font-variant-numeric:tabular-nums}
+.fb[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.fb[aria-pressed="true"] span{color:var(--bg);opacity:.7}
+.fb:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.sgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:10px}
+.sc2{border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;cursor:pointer;background:var(--surface);font:inherit;text-align:left;color:var(--ink)}
+.sc2 .k{font-size:22px;font-weight:700}
+.sc2 .l{font-size:12px;color:var(--ink2)}
+.sc2[aria-pressed="true"]{outline:2px solid var(--ink);outline-offset:-1px}
+.sc2 .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
+.deals{display:flex;flex-direction:column}
+.deal{display:grid;grid-template-columns:200px 92px 150px 1fr;gap:12px;align-items:start;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
+.deal:last-child{border-bottom:0}
+.deal .c{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.deal .c a{color:inherit;text-decoration:none;border-bottom:1px dotted var(--line)}
+.deal .c a:hover{border-bottom-color:var(--accent)}
+.deal .m,.deal .t{color:var(--ink2);overflow-wrap:anywhere}
+.deal .flag2{display:inline-block;margin-top:4px;font-size:11px;color:var(--crit);font-weight:600}
+.deal .age{display:inline-block;margin-top:4px;font-size:11px;color:var(--warn);font-weight:600}
+.st{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.s-push{background:var(--good-bg);color:var(--good)}
+.s-meet{background:var(--accent-soft);color:var(--accent)}
+.s-call{background:var(--sunk);color:var(--ink2)}
+.s-fill{background:var(--warn-bg);color:var(--warn)}
+.s-obj{background:var(--crit-bg);color:var(--crit)}
+.s-out{background:var(--sunk);color:var(--muted);text-decoration:line-through}
+.s-won{background:var(--good-bg);color:var(--good)}
+.s-none{background:var(--sunk);color:var(--muted)}
+.empty{color:var(--muted);font-size:14px;padding:10px 0}
+footer{color:var(--muted);font-size:13px;display:flex;flex-direction:column;gap:6px}
+footer a{color:var(--ink2)}
+#tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--bg);font-size:12px;padding:7px 10px;border-radius:6px;line-height:1.4;max-width:260px;z-index:10}
+
+@media (max-width:980px){
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tgrid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .sgrid{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:620px){
+  .wrap{padding:20px 16px 40px}
+  h1{font-size:21px}
+  .kpis{grid-template-columns:1fr}
+  .tgrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .sgrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .bar,.axis{grid-template-columns:76px 1fr 108px}
+  .deal{grid-template-columns:1fr auto;gap:4px 10px}
+  .deal .m{grid-column:2;grid-row:1;text-align:right}
+  .deal .sw{grid-column:1 / -1}
+  .deal .t{grid-column:1 / -1}
+}
+@media (prefers-reduced-motion:no-preference){
+  .meter .f,.track .f{transition:width .5s ease}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <div class="eyebrow">GREENCH · отдел продаж</div>
+      <h1 id="h-period">—</h1>
+      <div class="hmeta" id="h-meta">—</div>
+    </div>
+    <div class="pace"><i></i>Темп месяца: <b class="num" id="h-pace">—</b></div>
+  </header>
+
+  <section class="kpis" id="kpis" aria-label="Ключевые показатели"></section>
+
+  <section class="panel" id="flags-panel" hidden>
+    <div class="phead">
+      <h2>На что обратить внимание</h2>
+      <span class="sub">Считается при каждом обновлении · нажмите строку, чтобы раскрыть карточки</span>
+    </div>
+    <div class="flags" id="flags"></div>
+  </section>
+
+  <section class="panel">
+    <div class="phead">
+      <h2>Новые продажи по менеджерам</h2>
+      <span class="sub" id="bars-sub">черта = личный план</span>
+    </div>
+    <div class="bars" id="bars"></div>
+    <div class="axis" aria-hidden="true"><span></span><div class="sc" id="axis"></div><span></span></div>
+  </section>
+
+  <section class="panel">
+    <div class="phead">
+      <h2>Сводка по менеджерам</h2>
+      <span class="sub" id="tbl-sub"></span>
+    </div>
+    <div class="tscroll">
+      <table id="tbl">
+        <thead><tr>
+          <th>Менеджер</th><th>Новые продажи, ₽</th><th>% плана</th><th>Дегустации</th>
+          <th>Сделок в работе</th><th>Без инфо</th><th>Без движения</th>
+          <th>Оборот его клиентов, ₽</th>
+        </tr></thead>
+        <tbody></tbody>
+        <tfoot></tfoot>
+      </table>
+    </div>
+    <div class="note" id="tbl-note"></div>
+  </section>
+
+  <section class="panel">
+    <div class="phead">
+      <h2>Отправленные дегустации</h2>
+      <span class="sub num" id="tcount"></span>
+    </div>
+    <div class="tgrid" id="tgrid"></div>
+  </section>
+
+  <section class="panel">
+    <div class="phead">
+      <h2>Сделки в работе после дегустаций</h2>
+      <span class="sub" id="deals-sub"></span>
+    </div>
+    <div class="sgrid" id="sgrid"></div>
+    <div class="filters" id="mfilters" role="group" aria-label="Фильтр по менеджеру"></div>
+    <div class="deals" id="deals"></div>
+  </section>
+
+  <section class="panel" id="won-panel" hidden>
+    <div class="phead">
+      <h2>Закрепили сотрудничество в этом месяце</h2>
+      <span class="sub num" id="won-count"></span>
+    </div>
+    <div class="tgrid" id="won"></div>
+  </section>
+
+  <footer>
+    <div id="f-src">—</div>
+    <div id="f-gen">—</div>
+  </footer>
+</div>
+<div id="tip" hidden></div>
+
+<script>
+const DATA = /*__DATA__*/;
+const B24 = "https://greench-b24.ru/crm/deal/details/";
+const fmt = n => (n == null ? "—" : Math.round(n).toLocaleString("ru-RU"));
+const PACE = DATA.pace;
+const esc = s => String(s == null ? "" : s).replace(/[<>&"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
+function tier(p){ if(p >= PACE) return ["good","✓ в темпе"]; if(p >= PACE*0.7) return ["warn","! отстаёт"]; return ["crit","✕ сильно ниже"]; }
+
+document.getElementById("h-period").textContent = DATA.period_label;
+document.getElementById("h-meta").textContent =
+  `Данные на ${DATA.as_of} · HoReCa, Москва и МО · обновлено ${DATA.generated}`;
+document.getElementById("h-pace").textContent =
+  `${DATA.day} из ${DATA.days_in_month} дней · ${Math.round(PACE*100)}%`;
+
+/* ── KPI ─────────────────────────────────────────────────────────────── */
+const K = DATA.kpi;
+const kEl = document.getElementById("kpis");
+/* вторая строка в карточке «Оплаты» — сопровождение: сколько из оплат по ресторанам
+   менеджера и какой у него % плана (считается от оплат до вычета беби-листов). */
+const supExtra = (DATA.support || []).filter(s => s.plan).map(s => {
+  const [c] = s.pct == null ? ["info"] : tier(s.pct);
+  return `<div class="kfoot"><span class="p num">${esc(s.name)}: ${fmt(s.fact)} ₽ из ${fmt(s.plan)}</span>`
+    + `<span class="chip ${c} num">${s.pct == null ? "—" : Math.round(s.pct * 100) + "%"}</span></div>`
+    + `<div class="p num" title="в расчёт ЗП идут оплаты после вычета беби-листов">в расчёт ЗП ${fmt(s.fact_adj)} ₽</div>`;
+}).join("");
+[["Оборот", K.oborot, ""], ["Оплаты", K.postup, supExtra], ["Новые продажи", K.new, ""]].forEach(([label, k, extra]) => {
+  if (k.fact == null) {
+    kEl.insertAdjacentHTML("beforeend", `<div class="kpi">
+      <div class="eyebrow">${label}</div><div class="v num">нет данных</div>
+      <div class="p num">план ${fmt(k.plan)} ₽</div>
+      <div class="kfoot"><span class="p">источник не ответил</span><span class="chip crit">✕ нет связи</span></div>
+      ${extra}</div>`);
+    return;
+  }
+  const pct = k.plan ? k.fact / k.plan : 0;
+  const [c, t] = tier(pct);
+  kEl.insertAdjacentHTML("beforeend", `<div class="kpi">
+    <div class="eyebrow">${label}</div>
+    <div class="v num">${fmt(k.fact)} ₽</div>
+    <div class="meter" title="Факт ${(pct*100).toFixed(1)}% · темп месяца ${Math.round(PACE*100)}%">
+      <div class="f" style="width:${Math.min(pct,1)*100}%"></div><div class="t" style="left:${PACE*100}%"></div></div>
+    <div class="kfoot"><span class="p num">план ${fmt(k.plan)} · <b>${(pct*100).toFixed(1).replace(".", ",")}%</b></span>
+      <span class="chip ${c}">${t}</span></div>
+    <div class="p num">${k.fact >= k.plan ? "план выполнен" : "осталось " + fmt(k.plan - k.fact) + " ₽"}</div>
+    ${extra}
+  </div>`);
+});
+const T = K.tastings;
+kEl.insertAdjacentHTML("beforeend", `<div class="kpi">
+  <div class="eyebrow">Дегустации</div>
+  <div class="v num">${T.count}</div>
+  <div class="p">отправлено клиентам за месяц</div>
+  <div class="kfoot"><span class="p num">${T.in_work} сделок в работе</span>
+    <span class="chip ${T.empty ? "warn" : "good"}">${T.empty ? "! " + T.empty + " без инфо" : "✓ карточки заполнены"}</span></div>
+  <div class="p num">${T.push} на дожиме · ${T.closed} закрыто за месяц${T.won ? " · " + T.won + " закрепили сотрудничество" : ""}</div>
+</div>`);
+
+/* ── флаги ───────────────────────────────────────────────────────────── */
+const dealLink = (id, label) => `<a href="${B24}${id}/" target="_blank" rel="noopener">${esc(label)}</a>`;
+function flagItems(items){
+  return `<ul class="flist">${items.map(it => `<li>
+    <span class="ft">${it.id ? dealLink(it.id, it.title) : esc(it.title)}</span>
+    ${it.sub ? `<span class="fs">${esc(it.sub)}</span>` : ""}
+    ${it.links ? `<span class="dup">${it.links.map(l => dealLink(l.id, l.label)).join("")}</span>` : ""}
+  </li>`).join("")}</ul>`;
+}
+if (DATA.flags.length) {
+  document.getElementById("flags-panel").hidden = false;
+  document.getElementById("flags").innerHTML = DATA.flags.map(f => {
+    const chip = `<span class="chip ${f.kind === "crit" ? "crit" : f.kind === "warn" ? "warn" : "info"}">${
+      f.kind === "crit" ? "важно" : f.kind === "warn" ? "внимание" : "к сведению"}</span>`;
+    const body = (f.items && f.items.length)
+      ? `<details><summary><span>${esc(f.text)}</span></summary>${flagItems(f.items)}</details>`
+      : `<div>${esc(f.text)}</div>`;
+    return `<div class="flag">${chip}${body}</div>`;
+  }).join("");
+}
+
+/* ── бары по менеджерам ──────────────────────────────────────────────── */
+const M = DATA.managers;
+const MAXV = Math.max(...M.map(m => Math.max(m.sales, m.plan || 0)), 1) * 1.08;
+const bEl = document.getElementById("bars"), tip = document.getElementById("tip");
+M.forEach(m => {
+  const pct = m.plan ? m.sales / m.plan : null;
+  const row = document.createElement("div");
+  row.className = "bar";
+  row.tabIndex = 0;
+  const chip = pct == null
+    ? `<span class="chip info" title="личного плана нет">без плана</span>`
+    : `<span class="chip ${tier(pct)[0]}" title="${tier(pct)[1]}">${Math.round(pct*100)}%</span>`;
+  row.innerHTML = `<span class="n">${esc(m.name)}</span>
+    <div class="track"><div class="f" style="width:${Math.min(m.sales / MAXV, 1)*100}%"></div>
+      ${m.plan ? `<div class="pl" style="left:${Math.min(m.plan / MAXV, 1)*100}%"></div>` : ""}</div>
+    <span class="val num">${fmt(m.sales)} ${chip}</span>`;
+  const top = (DATA.top_clients[m.name] || []).map(c => `${esc(c.name)} ${fmt(c.sum)}`).join("<br>");
+  const txt = `<b>${esc(m.name)}</b><br>Новые продажи: ${fmt(m.sales)} ₽<br>`
+    + (m.plan ? `План: ${fmt(m.plan)} ₽ · ${(pct*100).toFixed(1).replace(".", ",")}%<br>`
+              + (m.sales >= m.plan ? "план выполнен" : `до плана ${fmt(m.plan - m.sales)} ₽`)
+              : "личного плана новых продаж нет")
+    + (top ? `<br><br>Крупнейшие:<br>${top}` : "");
+  row.addEventListener("mousemove", e => {
+    tip.innerHTML = txt; tip.hidden = false;
+    tip.style.left = Math.min(e.clientX + 14, innerWidth - 270) + "px";
+    tip.style.top = (e.clientY + 14) + "px";
+  });
+  row.addEventListener("mouseleave", () => tip.hidden = true);
+  row.setAttribute("aria-label", `${m.name}: ${fmt(m.sales)} рублей${m.plan ? ", " + Math.round(pct*100) + "% плана" : ""}`);
+  bEl.appendChild(row);
+});
+const ticks = [0, 0.25, 0.5, 0.75, 1].map(x => Math.round(MAXV * x / 10000) * 10000);
+document.getElementById("axis").innerHTML = [...new Set(ticks)].map(v =>
+  `<span style="left:${Math.min(v / MAXV, 1)*100}%">${v === 0 ? "0" : Math.round(v/1000) + "к"}</span>`).join("");
+document.getElementById("bars-sub").textContent =
+  `черта = личный план (менеджер поиска ${fmt(M.find(m => m.plan)?.plan || 0)} ₽, стажёры — половина)`;
+
+/* ── таблица ─────────────────────────────────────────────────────────── */
+const tb = document.querySelector("#tbl tbody");
+M.forEach(m => {
+  const pct = m.plan ? m.sales / m.plan : null;
+  tb.insertAdjacentHTML("beforeend", `<tr>
+    <td><b>${esc(m.name)}</b></td>
+    <td class="num">${fmt(m.sales)}</td>
+    <td>${pct == null ? '<span class="na">—</span>' : `<span class="chip ${tier(pct)[0]} num">${Math.round(pct*100)}%</span>`}</td>
+    <td class="num">${m.tastings || '<span class="na">—</span>'}</td>
+    <td class="num">${m.in_work || '<span class="na">—</span>'}</td>
+    <td class="num">${m.empty ? `<span class="chip warn num">${m.empty}</span>` : '<span class="na">—</span>'}</td>
+    <td class="num">${m.stale ? `<span class="chip warn num">${m.stale}</span>` : '<span class="na">—</span>'}</td>
+    <td class="num">${m.oborot ? fmt(m.oborot) : '<span class="na">—</span>'}</td></tr>`);
+});
+const sum = f => M.reduce((a, m) => a + (m[f] || 0), 0);
+document.querySelector("#tbl tfoot").innerHTML = `<tr>
+  <td>Отдел</td><td class="num">${fmt(K.new.fact)}</td>
+  <td><span class="chip ${tier(K.new.plan ? K.new.fact/K.new.plan : 0)[0]} num">${K.new.plan ? Math.round(K.new.fact/K.new.plan*100) : 0}%</span></td>
+  <td class="num">${T.count}</td><td class="num">${T.in_work}</td>
+  <td class="num">${sum("empty")}</td><td class="num">${sum("stale")}</td>
+  <td class="num">${fmt(K.oborot.fact)}</td></tr>`;
+document.getElementById("tbl-sub").textContent =
+  `новые продажи — лист «${DATA.sales_meta.sheet}», ${DATA.sales_meta.rows} клиентов`;
+document.getElementById("tbl-note").innerHTML =
+  `<b>Оборот его клиентов</b> — оборот за месяц по клиентам, закреплённым за менеджером как за менеджером поиска `
+  + `(1С + СПРАВОЧНИК). Оборот отдела больше суммы по менеджерам на ${fmt(DATA.oborot_unmatched)} ₽: `
+  + `прямые клиенты и карточки без закреплённого менеджера. `
+  + `<b>% плана отдела по новым продажам</b> считается от плана ${fmt(K.new.plan)} ₽ (НАСТРОЙКИ).`;
+
+/* ── дегустации ──────────────────────────────────────────────────────── */
+let tc = 0;
+document.getElementById("tgrid").innerHTML = Object.entries(DATA.tastings).map(([who, list]) => {
+  tc += list.length;
+  return `<div class="tcol"><h3><span>${esc(who)}</span><span class="num">${list.length}</span></h3>
+    <ul>${list.map(x => `<li><a href="${B24}${x.id}/" target="_blank" rel="noopener">${esc(x.title)}</a> <small>${x.created.slice(8,10)}.${x.created.slice(5,7)}</small></li>`).join("")}</ul></div>`;
+}).join("") || '<div class="empty">За месяц дегустаций в воронке нет</div>';
+document.getElementById("tcount").textContent = `Всего ${tc}`;
+
+/* ── сделки в работе ─────────────────────────────────────────────────── */
+const ST = {
+  push: ["Дожать до заказа", "s-push", "var(--good)"],
+  meet: ["Встреча", "s-meet", "var(--accent)"],
+  call: ["Связь / ОС", "s-call", "var(--ink2)"],
+  fill: ["Заполнить CRM", "s-fill", "var(--warn)"],
+  obj: ["Возражение", "s-obj", "var(--crit)"],
+  out: ["Провал / перевод", "s-out", "var(--muted)"],
+  none: ["Без статуса", "s-none", "var(--muted)"],
+};
+const D = DATA.deals;
+let fM = "Все", fS = null;
+const managers = ["Все", ...[...new Set(D.map(d => d.mgr))].sort()];
+
+function renderDeals(){
+  const pool = D.filter(d => fM === "Все" || d.mgr === fM);
+  document.getElementById("sgrid").innerHTML = Object.entries(ST)
+    .filter(([k]) => k !== "none" || pool.some(d => d.status === "none"))
+    .map(([k, v]) => `<button class="sc2" data-s="${k}" aria-pressed="${fS === k}">
+        <span class="k num">${pool.filter(d => d.status === k).length}</span>
+        <span class="l"><span class="dot" style="background:${v[2]}"></span>${v[0]}</span></button>`).join("");
+  document.getElementById("mfilters").innerHTML = managers.map(m =>
+    `<button class="fb" data-m="${esc(m)}" aria-pressed="${fM === m}">${esc(m)} <span>${
+      m === "Все" ? D.length : D.filter(d => d.mgr === m).length}</span></button>`).join("");
+  const rows = pool.filter(d => !fS || d.status === fS);
+  document.getElementById("deals").innerHTML = rows.length ? rows.map(d => `<div class="deal">
+      <div class="c"><a href="${B24}${d.id}/" target="_blank" rel="noopener">${esc(d.title)}</a>
+        ${d.empty ? '<br><span class="flag2">карточка пустая</span>' : ""}
+        ${d.days > 7 ? `<br><span class="age">без движения ${d.days} дн.</span>` : ""}</div>
+      <div class="m">${esc(d.mgr)}</div>
+      <div class="sw"><span class="st ${ST[d.status][1]}">${ST[d.status][0]}</span>${
+        d.stage_name ? `<br><span class="fs" style="font-size:11px;color:var(--muted)">${esc(d.stage_name)}</span>` : ""}</div>
+      <div class="t">${esc(d.action)}</div></div>`).join("")
+    : '<div class="empty">Нет сделок с этим статусом</div>';
+}
+document.getElementById("sgrid").addEventListener("click", e => {
+  const b = e.target.closest("[data-s]"); if (!b) return;
+  fS = fS === b.dataset.s ? null : b.dataset.s; renderDeals();
+});
+document.getElementById("mfilters").addEventListener("click", e => {
+  const b = e.target.closest("[data-m]"); if (!b) return;
+  fM = b.dataset.m; renderDeals();
+});
+renderDeals();
+document.getElementById("deals-sub").textContent = DATA.llm
+  ? "Статус — стадия воронки, уточнённая по последнему комментарию менеджера"
+  : "Статус — стадия воронки Битрикса (разбор комментариев отключён)";
+
+/* ── закрепили сотрудничество ────────────────────────────────────────── */
+if (DATA.won_month.length) {
+  document.getElementById("won-panel").hidden = false;
+  document.getElementById("won-count").textContent = `Всего ${DATA.won_month.length}`;
+  const by = {};
+  DATA.won_month.forEach(w => (by[w.mgr || "—"] = by[w.mgr || "—"] || []).push(w.title));
+  document.getElementById("won").innerHTML = Object.entries(by).map(([who, list]) =>
+    `<div class="tcol"><h3><span>${esc(who)}</span><span class="num">${list.length}</span></h3>
+      <ul>${list.map(t => `<li>${esc(t)}</li>`).join("")}</ul></div>`).join("");
+}
+
+/* ── подвал ──────────────────────────────────────────────────────────── */
+document.getElementById("f-src").innerHTML =
+  `Источники: оборот — 1С (регистр Продажи, базы ${Object.keys(DATA.oborot_bases).join(", ")}) · `
+  + `оплаты — Касса GREENCH · новые продажи — <a href="${DATA.sales_meta.url}" target="_blank" rel="noopener">`
+  + `таблица «ОТЧЕТЫ ПО ПРОДАЖАМ», лист «${esc(DATA.sales_meta.sheet)}»</a> · `
+  + `дегустации и сделки — Битрикс24, воронка «Дегустации» · планы — лист НАСТРОЙКИ`;
+document.getElementById("f-gen").textContent =
+  `Страница пересобирается автоматически. Последнее обновление ${DATA.generated}.`
+  + (DATA.settings_period ? ` Расчётный период в НАСТРОЙКАХ: ${DATA.settings_period}.` : "");
+</script>
+</body>
+</html>
