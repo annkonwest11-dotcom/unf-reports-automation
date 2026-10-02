@@ -278,15 +278,16 @@ const kEl = document.getElementById("kpis");
 const supExtra = (DATA.support || []).filter(s => s.plan).map(s => {
   const [c] = s.pct == null ? ["info"] : tier(s.pct);
   return `<div class="kfoot"><span class="p num">${esc(s.name)}: ${fmt(s.fact)} ₽ из ${fmt(s.plan)}</span>`
-    + `<span class="chip ${c} num">${s.pct == null ? "—" : Math.round(s.pct * 100) + "%"}</span></div>`
-    + `<div class="p num" title="в расчёт ЗП идут оплаты после вычета беби-листов">в расчёт ЗП ${fmt(s.fact_adj)} ₽</div>`;
+    + `<span class="chip ${s.stale ? "info" : c} num">${s.pct == null ? "—" : Math.round(s.pct * 100) + "%"}</span></div>`
+    + `<div class="p num" title="в расчёт ЗП идут оплаты после вычета беби-листов">в расчёт ЗП ${fmt(s.fact_adj)} ₽${
+        s.period ? ` · за ${esc(s.period.toLowerCase())}` : ""}${s.stale ? " — месяц ещё не закрыт" : ""}</div>`;
 }).join("");
 [["Оборот", K.oborot, ""], ["Оплаты", K.postup, supExtra], ["Новые продажи", K.new, ""]].forEach(([label, k, extra]) => {
   if (k.fact == null) {
     kEl.insertAdjacentHTML("beforeend", `<div class="kpi">
       <div class="eyebrow">${label}</div><div class="v num">нет данных</div>
       <div class="p num">план ${fmt(k.plan)} ₽</div>
-      <div class="kfoot"><span class="p">источник не ответил</span><span class="chip crit">✕ нет связи</span></div>
+      <div class="kfoot"><span class="p">${esc(k.reason || "источник не ответил")}</span><span class="chip crit">✕ нет данных</span></div>
       ${extra}</div>`);
     return;
   }
@@ -336,18 +337,19 @@ if (DATA.flags.length) {
 
 /* ── бары по менеджерам ──────────────────────────────────────────────── */
 const M = DATA.managers;
-const MAXV = Math.max(...M.map(m => Math.max(m.sales, m.plan || 0)), 1) * 1.08;
+const MAXV = Math.max(...M.map(m => Math.max(m.sales || 0, m.plan || 0)), 1) * 1.08;
 const bEl = document.getElementById("bars"), tip = document.getElementById("tip");
 M.forEach(m => {
-  const pct = m.plan ? m.sales / m.plan : null;
+  const pct = (m.plan && m.sales != null) ? m.sales / m.plan : null;
   const row = document.createElement("div");
   row.className = "bar";
   row.tabIndex = 0;
   const chip = pct == null
-    ? `<span class="chip info" title="личного плана нет">без плана</span>`
+    ? `<span class="chip info" title="${m.sales == null ? "нет листа месяца в таблице" : "личного плана нет"}">${
+        m.sales == null ? "нет данных" : "без плана"}</span>`
     : `<span class="chip ${tier(pct)[0]}" title="${tier(pct)[1]}">${Math.round(pct*100)}%</span>`;
   row.innerHTML = `<span class="n">${esc(m.name)}</span>
-    <div class="track"><div class="f" style="width:${Math.min(m.sales / MAXV, 1)*100}%"></div>
+    <div class="track"><div class="f" style="width:${Math.min((m.sales || 0) / MAXV, 1)*100}%"></div>
       ${m.plan ? `<div class="pl" style="left:${Math.min(m.plan / MAXV, 1)*100}%"></div>` : ""}</div>
     <span class="val num">${fmt(m.sales)} ${chip}</span>`;
   const top = (DATA.top_clients[m.name] || []).map(c => `${esc(c.name)} ${fmt(c.sum)}`).join("<br>");
@@ -374,7 +376,7 @@ document.getElementById("bars-sub").textContent =
 /* ── таблица ─────────────────────────────────────────────────────────── */
 const tb = document.querySelector("#tbl tbody");
 M.forEach(m => {
-  const pct = m.plan ? m.sales / m.plan : null;
+  const pct = (m.plan && m.sales != null) ? m.sales / m.plan : null;
   tb.insertAdjacentHTML("beforeend", `<tr>
     <td><b>${esc(m.name)}</b></td>
     <td class="num">${fmt(m.sales)}</td>
@@ -388,12 +390,14 @@ M.forEach(m => {
 const sum = f => M.reduce((a, m) => a + (m[f] || 0), 0);
 document.querySelector("#tbl tfoot").innerHTML = `<tr>
   <td>Отдел</td><td class="num">${fmt(K.new.fact)}</td>
-  <td><span class="chip ${tier(K.new.plan ? K.new.fact/K.new.plan : 0)[0]} num">${K.new.plan ? Math.round(K.new.fact/K.new.plan*100) : 0}%</span></td>
+  <td>${K.new.fact == null || !K.new.plan ? '<span class="na">—</span>'
+    : `<span class="chip ${tier(K.new.fact/K.new.plan)[0]} num">${Math.round(K.new.fact/K.new.plan*100)}%</span>`}</td>
   <td class="num">${T.count}</td><td class="num">${T.in_work}</td>
   <td class="num">${sum("empty")}</td><td class="num">${sum("stale")}</td>
   <td class="num">${fmt(K.oborot.fact)}</td></tr>`;
-document.getElementById("tbl-sub").textContent =
-  `новые продажи — лист «${DATA.sales_meta.sheet}», ${DATA.sales_meta.rows} клиентов`;
+document.getElementById("tbl-sub").textContent = DATA.sales_meta.exact
+  ? `новые продажи — лист «${DATA.sales_meta.sheet}», ${DATA.sales_meta.rows} клиентов`
+  : "новые продажи не считаются: в таблице нет листа за текущий месяц";
 document.getElementById("tbl-note").innerHTML =
   `<b>Оборот его клиентов</b> — оборот за месяц по клиентам, закреплённым за менеджером как за менеджером поиска `
   + `(1С + СПРАВОЧНИК). Оборот отдела больше суммы по менеджерам на ${fmt(DATA.oborot_unmatched)} ₽: `
