@@ -115,6 +115,38 @@ class TestManagerSales(unittest.TestCase):
         self.assertEqual(ws.title, "июль-август")
         self.assertFalse(exact)                        # борд покажет предупреждение
 
+    def test_last_year_sheet_with_same_month_is_not_picked(self):
+        """★Регрессия 02.10.2026: названия месяцев повторяются каждый год.
+
+        В книге лежат прошлогодние «конец сентября-октярь» и «Октябрь (конец)-Ноябрь»,
+        а листа за октябрь 2026 ещё нет. Раньше борд брал прошлогодний лист и показывал
+        его 496 355 ₽ как новые продажи октября 2026.
+        """
+        titles = ["конец сентября-октярь", "Октябрь (конец)-Ноябрь", "декабрь-январь",
+                  "январь-февраль", "февраль-март", "март-апрель", "апрель-май",
+                  "май-июнь", "июнь-июль", "июль-август", "август-сентябрь"]
+        book = FakeSpreadsheet([FakeWorksheet(SALES, t, i) for i, t in enumerate(titles)])
+        ws, exact = rb.pick_sales_sheet(book, datetime(2026, 10, 2))
+        self.assertEqual(ws.title, "август-сентябрь")   # самый правый, а не прошлогодний
+        self.assertFalse(exact)
+
+    def test_new_month_sheet_is_picked_once_created(self):
+        titles = ["Октябрь (конец)-Ноябрь", "июль-август", "август-сентябрь",
+                  "сентябрь-октябрь"]
+        book = FakeSpreadsheet([FakeWorksheet(SALES, t, i) for i, t in enumerate(titles)])
+        ws, exact = rb.pick_sales_sheet(book, datetime(2026, 10, 2))
+        self.assertEqual(ws.title, "сентябрь-октябрь")
+        self.assertTrue(exact)
+
+    def test_no_sheet_means_no_numbers(self):
+        """Нет листа месяца — суммы не отдаём вовсе, чтобы не выдать чужой период."""
+        book = FakeSpreadsheet([FakeWorksheet(SALES, "июль-август", 1)])
+        totals, meta, clients = rb.manager_sales(book, datetime(2026, 10, 2))
+        self.assertFalse(meta["exact"])
+        self.assertEqual(meta["rows"], 0)
+        self.assertTrue(all(v is None for v in totals.values()))
+        self.assertFalse(clients)
+
 
 class TestComments(unittest.TestCase):
     def test_bb_codes_stripped(self):
@@ -292,3 +324,22 @@ class TestStageNames(unittest.TestCase):
         for stage, name in rb.STAGE_NAMES_FALLBACK.items():
             self.assertNotEqual(stage, name)
             self.assertTrue(name.strip())
+
+
+class TestPeriodMixups(unittest.TestCase):
+    """Данные разных периодов не должны выдаваться за текущий месяц."""
+
+    def test_support_line_marks_other_period(self):
+        data = dict(TestSummary.DATA,
+                    support=[{"name": "Алена", "plan": 4174949, "fact": 4392679,
+                              "fact_adj": 4300000, "pct": 1.052,
+                              "period": "Сентябрь 2026", "stale": True}])
+        text = rb.summary_text(data)
+        self.assertIn("Оплаты ресторанов Алена", text)
+
+    def test_new_sales_reason_instead_of_silence(self):
+        """Нет листа месяца — борд объясняет причину, а не показывает ноль."""
+        book = FakeSpreadsheet([FakeWorksheet(SALES, "июль-август", 1)])
+        totals, meta, _ = rb.manager_sales(book, datetime(2026, 10, 2))
+        self.assertFalse(meta["exact"])
+        self.assertTrue(all(v is None for v in totals.values()))

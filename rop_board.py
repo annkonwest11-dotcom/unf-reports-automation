@@ -61,6 +61,7 @@ SALES_SPREADSHEET = "1QuvmjSPJUbqGTbGKKBcDu8QdQaFv1Gg2VbzUb-bEbL4"
 CATEGORY_TASTINGS = 0          # воронка «Дегустации»
 PLAN_SEARCH_DEFAULT = 210000   # план новых продаж менеджера поиска (НАСТРОЙКИ!C8)
 STALE_DAYS = 7                 # сделка без движения столько дней — флаг РОПу
+SALES_SHEET_WINDOW = 6         # сколько последних листов «ОТЧЕТОВ» считаем текущими
 
 MONTHS_RU = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль",
              "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
@@ -361,13 +362,19 @@ def llm_classify(items, model=None):
 def pick_sales_sheet(spreadsheet, today):
     """Лист «ОТЧЕТОВ ПО ПРОДАЖАМ» за текущий период.
 
-    Листы Анна называет «август-сентябрь», «июль-август» — берём последний
-    (самый правый) лист, в имени которого есть название текущего месяца и нет
-    пометки «КОПИЯ». Не нашли — последний лист без «КОПИЯ», это видно в борде.
+    Листы Анна называет «август-сентябрь», «июль-август» и добавляет в конец
+    книги. ★ГРАБЛИ (пойманы 02.10.2026): названия месяцев повторяются каждый год —
+    в книге есть прошлогодние «конец сентября-октярь» и «Октябрь (конец)-Ноябрь»,
+    и поиск «любой лист с текущим месяцем» выдал прошлогодний, а борд показал его
+    цифры как октябрь 2026. Поэтому ищем только среди последних листов книги; если
+    среди них листа текущего месяца нет — его ещё не создали, и это видно в борде.
     """
     month = MONTHS_RU[today.month - 1]
     sheets = [ws for ws in spreadsheet.worksheets() if "копия" not in ws.title.lower()]
-    named = [ws for ws in sheets if month in ws.title.lower()]
+    if not sheets:
+        raise RuntimeError("В таблице «ОТЧЕТЫ ПО ПРОДАЖАМ» нет листов")
+    recent = sheets[-SALES_SHEET_WINDOW:]
+    named = [ws for ws in recent if month in ws.title.lower()]
     if named:
         return named[-1], True
     return sheets[-1], False
@@ -401,13 +408,19 @@ def manager_sales(spreadsheet, today):
                     totals[name] += v
                     clients[name].append({"name": (row[0] or "").strip()[:60],
                                           "sum": round(v)})
+    if not exact:
+        # лист текущего месяца не создан: суммы прошлого периода выдавать нельзя
+        logger.warning("Листа за текущий месяц нет, ближайший — «%s»", ws.title)
+        totals = {name: None for name in cols.values()}
+        clients = defaultdict(list)
     meta = {
         "sheet": ws.title,
         "exact": exact,
-        "rows": rows,
+        "rows": rows if exact else 0,
         "url": f"https://docs.google.com/spreadsheets/d/{SALES_SPREADSHEET}/edit#gid={ws.id}",
     }
-    return {k: round(v) for k, v in totals.items()}, meta, clients
+    return ({k: (round(v) if v is not None else None) for k, v in totals.items()},
+            meta, clients)
 
 
 def read_plans(spreadsheet):
@@ -571,11 +584,17 @@ def build(today=None, use_llm=True):
 
     support = []
     try:
+        # листы ДАННЫЕ_* живут по расчётному периоду из НАСТРОЕК (B4): пока месяц не
+        # закрыт, в них лежит он, а не календарный — иначе борд выдал бы сентябрьские
+        # оплаты за октябрьские (поймано 02.10.2026)
+        data_period = plans["period"]
         facts = support_payments(salary, list(plans["support"]))
         for who, plan in plans["support"].items():
             raw, adj = facts.get(who, (0, 0))
             support.append({"name": first_name(who), "full": who, "plan": round(plan),
-                            "fact": raw, "fact_adj": adj,
+                            "fact": raw, "fact_adj": adj, "period": data_period,
+                            "stale": (data_period or "").lower()
+                                     != f"{MONTHS_RU[today.month - 1]} {today.year}",
                             "pct": round(raw / plan, 4) if plan else None})
     except Exception as exc:
         logger.warning("Оплаты сопровождения не посчитаны: %s", exc)
@@ -696,7 +715,7 @@ def build(today=None, use_llm=True):
         live = [r for r in rows if r["status"] not in ("out", "won")]
         managers.append({
             "name": name,
-            "sales": sales.get(name, 0),
+            "sales": sales.get(name, 0) if sales_meta["exact"] else None,
             "plan": plan or 0,
             "tastings": len(tastings.get(name, [])),
             "in_work": len(live),
@@ -705,7 +724,7 @@ def build(today=None, use_llm=True):
             "stale": len([r for r in live if (r["days"] or 0) > STALE_DAYS]),
             "oborot": oborot_mgr.get(name, 0),
         })
-    managers.sort(key=lambda m: -m["sales"])
+    managers.sort(key=lambda m: (-(m["sales"] or 0), m["name"]))
 
     # ─ дубли карточек в воронке за месяц
     dupes = [{"title": cards[0]["title"], "cards": cards}
@@ -720,11 +739,15 @@ def build(today=None, use_llm=True):
     if postup_error:
         flags.append({"kind": "crit", "text": f"Касса GREENCH не ответила: {postup_error}"})
     if not sales_meta["exact"]:
-        flags.append({"kind": "warn",
-                      "text": f"В «ОТЧЕТАХ ПО ПРОДАЖАМ» нет листа с месяцем "
-                              f"«{MONTHS_RU[today.month - 1]}» — считаю по листу "
-                              f"«{sales_meta['sheet']}»."})
-    behind = [m for m in managers if m["plan"] and m["sales"] / m["plan"] < pace * 0.7]
+        flags.append({"kind": "crit",
+                      "text": f"В «ОТЧЕТАХ ПО ПРОДАЖАМ» нет листа за "
+                              f"{MONTHS_RU[today.month - 1]} {today.year} — новые продажи не "
+                              f"считаю, чтобы не выдать цифры прошлого периода. Создайте лист "
+                              f"(как «август-сентябрь»), борд подхватит его сам на следующем "
+                              f"прогоне."})
+    behind = [m for m in managers
+              if m["plan"] and m["sales"] is not None
+              and m["sales"] / m["plan"] < pace * 0.7]
     if behind:
         flags.append({"kind": "crit",
                       "text": "Сильно ниже темпа по новым продажам: "
@@ -738,7 +761,7 @@ def build(today=None, use_llm=True):
                                 for m in behind]})
     live_rows = [r for r in active_rows if r["status"] not in ("out", "won")]
     for sup in support:
-        if sup["pct"] is not None and sup["pct"] < pace * 0.9:
+        if sup["pct"] is not None and not sup["stale"] and sup["pct"] < pace * 0.9:
             flags.append({"kind": "warn",
                           "text": f"Оплаты ресторанов {sup['name']}: "
                                   f"{sup['pct'] * 100:.0f}% плана при темпе месяца "
@@ -806,9 +829,17 @@ def build(today=None, use_llm=True):
         "days_in_month": days_in_month,
         "settings_period": plans["period"],
         "kpi": {
-            "oborot": {"fact": oborot, "plan": round(plans["oborot"])},
-            "postup": {"fact": postup, "plan": round(plans["postup"])},
-            "new": {"fact": round(sum(sales.values())), "plan": round(plans["new"])},
+            "oborot": {"fact": oborot, "plan": round(plans["oborot"]),
+                       "reason": ("1С не ответила: " + ", ".join(bases_down)
+                                  if bases_down and oborot == 0 else None)},
+            "postup": {"fact": postup, "plan": round(plans["postup"]),
+                       "reason": "Касса GREENCH не ответила" if postup is None else None},
+            "new": {"fact": (round(sum(v for v in sales.values() if v))
+                             if sales_meta["exact"] else None),
+                    "plan": round(plans["new"]),
+                    "reason": (None if sales_meta["exact"] else
+                               f"нет листа за {MONTHS_RU[today.month - 1]} "
+                               f"{today.year} в таблице")},
             "tastings": {
                 "count": sum(len(v) for v in tastings.values()),
                 "in_work": len(live_rows),
