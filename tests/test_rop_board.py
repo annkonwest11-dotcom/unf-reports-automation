@@ -343,3 +343,17 @@ class TestPeriodMixups(unittest.TestCase):
         totals, meta, _ = rb.manager_sales(book, datetime(2026, 10, 2))
         self.assertFalse(meta["exact"])
         self.assertTrue(all(v is None for v in totals.values()))
+
+
+class TestLlmFlag(unittest.TestCase):
+    """Подпись «статусы разобраны моделью» не должна зависеть от попадания в кеш."""
+
+    def test_cached_statuses_count_as_llm(self):
+        rows = [{"id": "1", "stage": "NEW", "note": "не дозвон"}]
+        fresh = {"1": {"h": "x", "status": "call", "action": "дозвониться"}}
+        self.assertTrue(any(fresh.get(r["id"], {}).get("status") for r in rows))
+
+    def test_no_statuses_means_no_llm(self):
+        rows = [{"id": "1", "stage": "NEW", "note": ""}]
+        fresh = {"1": {"h": "x"}}
+        self.assertFalse(any(fresh.get(r["id"], {}).get("status") for r in rows))

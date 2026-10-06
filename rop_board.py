@@ -675,7 +675,6 @@ def build(today=None, use_llm=True):
                 need.append({"id": r["id"], "stage": r["stage"], "note": r["note"] or ""})
                 fresh[r["id"]] = {"h": h}
         got = llm_classify(need)
-        llm_used = bool(got)
         for did, v in got.items():
             if did in fresh:
                 fresh[did].update(status=v["status"], action=v["action"])
@@ -690,6 +689,9 @@ def build(today=None, use_llm=True):
                 r["status"] = status
             if action:
                 r["action"] = action
+        # разбор считается рабочим и когда модель не вызывалась: статусы пришли из
+        # кеша по прежним ответам (иначе подпись на странице врала — 06.10.2026)
+        llm_used = any(fresh.get(r["id"], {}).get("status") for r in active_rows)
         save_cache({k: v for k, v in fresh.items() if v.get("status")})
 
     for r in active_rows:
