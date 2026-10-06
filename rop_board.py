@@ -62,6 +62,9 @@ CATEGORY_TASTINGS = 0          # воронка «Дегустации»
 PLAN_SEARCH_DEFAULT = 210000   # план новых продаж менеджера поиска (НАСТРОЙКИ!C8)
 STALE_DAYS = 7                 # сделка без движения столько дней — флаг РОПу
 SALES_SHEET_WINDOW = 6         # сколько последних листов «ОТЧЕТОВ» считаем текущими
+# «Сильно ниже темпа» поднимаем только после 10 числа: в начале месяца у всех мало
+# продаж, и флаг ругался на полотдела без повода (решение Анны 06.10.2026)
+PACE_FLAG_FROM_DAY = 11
 
 MONTHS_RU = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль",
              "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
@@ -299,6 +302,19 @@ SYSTEM_PROMPT = (
     "(«не дозвон» → «дозвониться до ЛПР»).\n"
     'Ответ — только JSON: {"1234": {"status": "push", "action": "…"}, …}'
 )
+
+
+def behind_pace(managers, pace, day):
+    """Менеджеры, сильно отставшие от темпа месяца по новым продажам.
+
+    До `PACE_FLAG_FROM_DAY` возвращаем пусто: на старте месяца факт у всех близок
+    к нулю, и флаг поднимался бы каждый раз без повода.
+    """
+    if day < PACE_FLAG_FROM_DAY:
+        return []
+    return [m for m in managers
+            if m["plan"] and m["sales"] is not None
+            and m["sales"] / m["plan"] < pace * 0.7]
 
 
 def load_cache():
@@ -675,7 +691,6 @@ def build(today=None, use_llm=True):
                 need.append({"id": r["id"], "stage": r["stage"], "note": r["note"] or ""})
                 fresh[r["id"]] = {"h": h}
         got = llm_classify(need)
-        llm_used = bool(got)
         for did, v in got.items():
             if did in fresh:
                 fresh[did].update(status=v["status"], action=v["action"])
@@ -690,6 +705,9 @@ def build(today=None, use_llm=True):
                 r["status"] = status
             if action:
                 r["action"] = action
+        # разбор считается рабочим и когда модель не вызывалась: статусы пришли из
+        # кеша по прежним ответам (иначе подпись на странице врала — 06.10.2026)
+        llm_used = any(fresh.get(r["id"], {}).get("status") for r in active_rows)
         save_cache({k: v for k, v in fresh.items() if v.get("status")})
 
     for r in active_rows:
@@ -745,9 +763,7 @@ def build(today=None, use_llm=True):
                               f"считаю, чтобы не выдать цифры прошлого периода. Создайте лист "
                               f"(как «август-сентябрь»), борд подхватит его сам на следующем "
                               f"прогоне."})
-    behind = [m for m in managers
-              if m["plan"] and m["sales"] is not None
-              and m["sales"] / m["plan"] < pace * 0.7]
+    behind = behind_pace(managers, pace, today.day)
     if behind:
         flags.append({"kind": "crit",
                       "text": "Сильно ниже темпа по новым продажам: "
