@@ -357,3 +357,28 @@ class TestLlmFlag(unittest.TestCase):
         rows = [{"id": "1", "stage": "NEW", "note": ""}]
         fresh = {"1": {"h": "x"}}
         self.assertFalse(any(fresh.get(r["id"], {}).get("status") for r in rows))
+
+
+class TestPaceFlag(unittest.TestCase):
+    """«Сильно ниже темпа» — только после 10 числа (решение Анны 06.10.2026)."""
+
+    MANAGERS = [
+        {"name": "Лилия", "plan": 210000, "sales": 10000},    # 5% — сильно ниже
+        {"name": "Дарья", "plan": 210000, "sales": 200000},   # в темпе
+        {"name": "Анна", "plan": 0, "sales": 65000},          # без плана
+        {"name": "Ксения", "plan": 210000, "sales": None},    # нет данных
+    ]
+
+    def test_silent_in_the_beginning_of_month(self):
+        self.assertEqual(rb.behind_pace(self.MANAGERS, 0.19, 6), [])
+        self.assertEqual(rb.behind_pace(self.MANAGERS, 0.32, 10), [])
+
+    def test_fires_from_the_eleventh(self):
+        names = [m["name"] for m in rb.behind_pace(self.MANAGERS, 0.35, 11)]
+        self.assertEqual(names, ["Лилия"])
+
+    def test_manager_in_pace_and_without_plan_are_not_flagged(self):
+        names = [m["name"] for m in rb.behind_pace(self.MANAGERS, 0.93, 29)]
+        self.assertNotIn("Дарья", names)
+        self.assertNotIn("Анна", names)
+        self.assertNotIn("Ксения", names)   # факта нет — не ругаемся
