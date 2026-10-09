@@ -248,7 +248,7 @@ def main():
 
     turn_all = turn_clean = pay_total = 0.0
     pay_by_poisk = defaultdict(float)
-    for tab in ("ДАННЫЕ_Губарев", "ДАННЫЕ_Перфильев"):
+    for tab in ("ДАННЫЕ_Губарев", "ДАННЫЕ_Перфильев", "ДАННЫЕ_Володихина"):
         for r in sh.worksheet(tab).get_all_values()[3:]:
             if len(r) < 7:
                 continue

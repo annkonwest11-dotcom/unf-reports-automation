@@ -39,7 +39,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID") or "1KaxfaSWTDR31eAJfmpahaNwaO2Qohrh5xua1Rrjf2Zo"
-DATA_TABS = ("ДАННЫЕ_Губарев", "ДАННЫЕ_Перфильев")
+DATA_TABS = ("ДАННЫЕ_Губарев", "ДАННЫЕ_Перфильев", "ДАННЫЕ_Володихина")
 
 
 def norm(s):

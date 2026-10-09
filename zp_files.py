@@ -187,6 +187,30 @@ def build_files(only=None, outdir=None):
         bals[base_name] = load_balances(cfg["id"], start, end)
         soft_idx[base_name] = build_token_index(bals[base_name].keys())
 
+    # ★09.10.2026: клиенты, переведённые в начале месяца, считаются С ОКТЯБРЯ —
+    # их оплаты вычитаются из базы KPI формулой СВОДНОЙ (список в НАСТРОЙКИ!A46:A51).
+    # В файле показываем этот вычет ОТДЕЛЬНОЙ строкой: иначе подпись «идёт в расчёт
+    # ЗП» расходится с тем, что реально идёт в ЗП (у Алёны за сентябрь — на 229 789).
+    moved = {canon(v) for v in ss.worksheet("НАСТРОЙКИ").col_values(1)[45:51]
+             if (v or "").strip()}
+
+    def moved_sum(pred):
+        tot = 0.0
+        for grid in grids.values():
+            for r in grid[DATA_START_ROW - 1:]:
+                nm = (r[0] or "").strip() if r else ""
+                if not nm or canon(nm) not in moved:
+                    continue
+                f = (r[5] or "").strip() if len(r) > 5 else ""
+                g = (r[6] or "").strip() if len(r) > 6 else ""
+                h = (r[7] or "").strip() if len(r) > 7 else ""
+                if pred(f, g, h):
+                    tot += num(r[9] if len(r) > 9 else 0)
+        return round(tot, 2)
+
+    _alena_pred = lambda f, g, h: g == "Алена Черкашина" and h == "Ресторан"
+    _alena_moved = moved_sum(_alena_pred)
+
     def kpi(who, label, col=3):
         """Значение строки блока сотрудника из СВОДНОЙ (C по умолчанию, E при col=5)."""
         block, _ = sh.block(who)
@@ -218,11 +242,17 @@ def build_files(only=None, outdir=None):
                       kpi("Лилия Сулименко", "% выполнения плана"))]),
         dict(who="Алена Черкашина", fname="Взаиморасчеты ЧЕРКАШИНА АЛЕНА",
              descr="Алёна Черкашина — рестораны на сопровождении",
-             pred=lambda f, g, h: g == "Алена Черкашина" and h == "Ресторан",
-             bottom=[f"ФАКТ С ВЫЧЕТОМ БЕБИ (идёт в расчёт ЗП)",
-                     ("План на месяц", _plan_alena(ss)),
-                     ("% выполнения плана",
-                      kpi("Алена Черкашина", "% выполнения плана"))]),
+             pred=_alena_pred,
+             moved=_alena_moved,
+             bottom=["ФАКТ С ВЫЧЕТОМ БЕБИ" if _alena_moved
+                     else "ФАКТ С ВЫЧЕТОМ БЕБИ (идёт в расчёт ЗП)"]
+                    + ([("минус переведённые — оплаты считаем с октября", -_alena_moved),
+                        ("ИТОГО В РАСЧЁТ ЗП (база KPI)",
+                         kpi("Алена Черкашина", "Оплаты ресторанов (скорр.)"))]
+                       if _alena_moved else [])
+                    + [("План на месяц", _plan_alena(ss)),
+                       ("% выполнения плана",
+                        kpi("Алена Черкашина", "% выполнения плана"))]),
         dict(who="Анна Кононенко (РОП)", fname="Взаиморасчеты АННА КОНОНЕНКО",
              descr="Анна Кононенко (РОП) — все рестораны",
              pred=lambda f, g, h: h == "Ресторан",
@@ -242,10 +272,20 @@ def build_files(only=None, outdir=None):
             continue
         records = []
         for base_name, grid in grids.items():
+            # ★09.10.2026: один клиент, дважды заведённый в ОДНОМ листе ДАННЫЕ
+            # (ЛЯ МАРЭ ПЕТРОВКА — строки 229 и 230 у Губарева), попадал в файл
+            # двумя строками, и каждой balance_for отдавал всю сумму из 1С: у
+            # Алёны файл показывал на 25 212 ₽ больше, чем есть (в СВОДНОЙ при
+            # этом верно — там суммируется колонка J листа, а у строки-дубля
+            # она пустая). Внутри одной базы клиента берём один раз.
+            seen_in_base = set()
             for r in grid[DATA_START_ROW - 1:]:
                 name = (r[0] or "").strip() if r else ""
                 if not name:
                     continue
+                if canon(name) in seen_in_base:
+                    continue
+                seen_in_base.add(canon(name))
                 f = (r[5] or "").strip() if len(r) > 5 else ""
                 g = (r[6] or "").strip() if len(r) > 6 else ""
                 h = (r[7] or "").strip() if len(r) > 7 else ""
@@ -262,12 +302,17 @@ def build_files(only=None, outdir=None):
         path = os.path.join(outdir, f"{rep['fname']} {month_label} {year}.xlsx")
         cnt, cnt_beby, raw, adj = _write(path, records, rep["bottom"], month_label)
         cap = [f"📊 {rep['descr']}", f"{month_label} {year}", "", f"Контрагентов: {cnt}"]
+        moved_amt = rep.get("moved") or 0
+        tail = "" if moved_amt else " (в расчёт ЗП)"
         if cnt_beby:
             cap.append(f"с беби-листами: {cnt_beby} — помечены справа")
             cap.append(f"Оплаты без вычета беби: {big(raw)} ₽")
-            cap.append(f"Оплаты с вычетом беби: {big(adj)} ₽ (в расчёт ЗП)")
+            cap.append(f"Оплаты с вычетом беби: {big(adj)} ₽{tail}")
         else:
-            cap.append(f"Оплаты: {big(adj)} ₽ (в расчёт ЗП)")
+            cap.append(f"Оплаты: {big(adj)} ₽{tail}")
+        if moved_amt:
+            cap.append(f"минус переведённые (считаем с октября): −{big(moved_amt)} ₽")
+            cap.append(f"ИТОГО в расчёт ЗП: {big(adj - moved_amt)} ₽")
         out.append((path, "\n".join(cap), cnt, raw, adj, rep["who"]))
     return out
 
