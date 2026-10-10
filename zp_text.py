@@ -242,8 +242,11 @@ def build_support(sh, name, month, facts, pay, plan):
             f"({pct(plan_pct)} выполнения плана), итог с вычетом беби {big(base)} файл ниже 👇",
             line("+", oper, "1% от оплат клиентов")]
     if plan_bonus:
+        # ★09.10.2026: ставка план-бонуса зависит от %плана (≥100% → 1%, 70-99% → 0,7%),
+        # а в подписи стояло жёстко «1%» — при 95% плана текст противоречил сумме.
+        rate = "1%" if plan_pct >= 1 else "0,7%"
         out.append(line("+", plan_bonus,
-                        f"1% от оплат клиентов за выполнение плана на {pct(plan_pct)}"))
+                        f"{rate} от оплат клиентов за выполнение плана на {pct(plan_pct)}"))
     if extra:
         out.append(line("+", extra, note.strip() or "премия"))
     return finish(out, total, name, pay)
