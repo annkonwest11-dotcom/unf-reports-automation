@@ -805,5 +805,110 @@ class TestAuthorsFromSheets(unittest.TestCase):
         self.assertEqual(len(known), 1)
 
 
+class TestPendingRow(unittest.TestCase):
+    """Строка, которую бот вставляет в лист: вид и колонка суммы (13.10.2026)."""
+
+    COLS = {"restaurant": 1, "entity": 2, "base": 3, "created": 4, "kind": 5, "until": 6}
+    MANAGERS = {7: "Дарья Вольнова", 8: "Алена Черкашина", 13: "Анна Кононенко (РОП)"}
+    SUM_COL = 15
+
+    def row(self, **kw):
+        r = dict(client="ТЭМУ (ООО ИНВЕСТИЦИОННЫЙ ЦЕНТР)", kind="кандидат",
+                 event=date(2026, 10, 13), window_end=date(2026, 11, 11),
+                 amount=4_145.0, source="1С", manager=None)
+        r.update(kw)
+        return sr.pending_row(r, self.COLS, self.SUM_COL, self.MANAGERS)
+
+    def test_guess_waits_for_confirmation(self):
+        """Догадка 1С без бланка так и остаётся «ждёт подтверждения», сумма — за ИТОГ."""
+        row, col = self.row()
+        self.assertEqual(row[self.COLS["kind"] - 1], sr.PENDING_MARK)
+        self.assertEqual(col, self.SUM_COL)
+        self.assertEqual(row[self.SUM_COL - 1], 4_145.0)
+
+    def test_answer_from_anna_sets_the_kind(self):
+        """Анна нажала «вношу» — вид известен, «ждёт подтверждения» писать нельзя."""
+        row, _ = self.row(source="ответ Анны")
+        self.assertEqual(row[self.COLS["kind"] - 1], "вернули")
+        self.assertEqual(row[self.COLS["created"] - 1], "вернули 13.10")
+
+    def test_blank_puts_money_in_manager_column(self):
+        """Бланк менеджера: вид «новый», сумма — в его колонку, иначе её нет в итоге."""
+        row, col = self.row(kind="новый", source="бланк", manager="Алена Черкашина")
+        self.assertEqual(row[self.COLS["kind"] - 1], "новый")
+        self.assertEqual(row[self.COLS["created"] - 1], "первый заказ 13.10")
+        self.assertEqual(col, 8)
+        self.assertEqual(row[7], 4_145.0)
+        self.assertEqual(row[self.SUM_COL - 1], "")
+
+    def test_unknown_manager_name_goes_behind_total(self):
+        """Имя, которого нет в шапке листа, в колонку не превращаем."""
+        row, col = self.row(source="бланк", manager="Марина")
+        self.assertEqual(col, self.SUM_COL)
+
+    def test_one_order_candidate_is_marked_as_rare(self):
+        """«Разовый» подтверждён кнопкой — так и пишем (правило 3)."""
+        row, _ = self.row(kind="разовый", source="ответ Анны")
+        self.assertEqual(row[self.COLS["kind"] - 1], "разовый")
+
+
+class TestApplyPlanClearsBotColumn(unittest.TestCase):
+    """Сумма уехала в колонку менеджера — служебную «сумма по 1С (бот)» чистим."""
+
+    class Ws:
+        def __init__(self):
+            self.body = []
+
+        def batch_update(self, body, value_input_option=None):
+            self.body = body
+
+        def update_note(self, *a, **k):
+            pass
+
+    COLS = {"restaurant": 1, "entity": 2, "base": 3, "created": 4, "kind": 5, "until": 6}
+    MANAGERS = {7: "Дарья Вольнова", 8: "Алена Черкашина"}
+
+    def sheet(self, rows=()):
+        return {"cols": self.COLS, "managers": self.MANAGERS, "header": [],
+                "rows": list(rows), "last_row": 10}
+
+    def plan(self, col):
+        return {"until": [], "amount": [(58, col, 4_145.0, "")], "ask": [],
+                "conflicts": [], "entities": [], "bases": []}
+
+    def ranges(self, col, rows=()):
+        ws = self.Ws()
+        sr.apply_plan(ws, self.plan(col), self.sheet(rows))
+        return {b["range"]: b["values"][0][0] for b in ws.body}
+
+    def test_manager_column_clears_service_cell(self):
+        """ТЭМУ 13.10.2026: 4 145 ₽ встали Алёне, а в J58 висел тот же дубль."""
+        got = self.ranges(8, rows=[dict(row=58, sums={7: None, 8: None}, bot=4_145.0)])
+        self.assertEqual(got["H58"], 4_145.0)
+        self.assertEqual(got["J58"], "")          # колонка менеджеров 7-8 → бот в 10
+
+    def test_service_cell_itself_is_not_cleared(self):
+        """Пока менеджер неизвестен, сумма живёт в служебной колонке — не чистим её."""
+        got = self.ranges(10, rows=[dict(row=58, sums={7: None, 8: None}, bot=4_145.0)])
+        self.assertEqual(got["J58"], 4_145.0)
+        self.assertEqual(len(got), 1)
+
+    def test_dash_alone_does_not_clear_the_draft(self):
+        """Прочерк — ещё не сумма: черновик бота пока нужен."""
+        got = self.ranges(10, rows=[dict(row=58, sums={7: None, 8: None}, bot=4_145.0,
+                                         dashes=[8])])
+        self.assertEqual(got["J58"], 4_145.0)
+
+    def test_draft_cleared_when_money_already_in_sheet(self):
+        """★ТЭМУ: сумма встала у Алёны ещё в прошлый прогон, а дубль висел за ИТОГ."""
+        ws = self.Ws()
+        sheet = self.sheet([dict(row=58, sums={7: None, 8: 4_145.0}, bot=4_145.0)])
+        plan = {"until": [], "amount": [], "ask": [], "conflicts": [],
+                "entities": [], "bases": []}
+        sr.apply_plan(ws, plan, sheet)
+        got = {b["range"]: b["values"][0][0] for b in ws.body}
+        self.assertEqual(got, {"J58": ""})
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

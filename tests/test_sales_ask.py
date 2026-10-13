@@ -247,5 +247,30 @@ class TestAskRows(unittest.TestCase):
         self.assertEqual((sent, len(self.sent)), (5, 5))
 
 
+class TestAnswersThis(unittest.TestCase):
+    """Какой вердикт какой вопрос закрывает (13.10.2026, случай ТЭМУ)."""
+
+    def test_add_question_closed_by_any_verdict(self):
+        for v in ("вносить", "не вносить", "разовый", "Дарья"):
+            self.assertTrue(sa.answers_this(sa.ASK_ADD, v), v)
+
+    def test_who_question_not_closed_by_yes(self):
+        """«Вношу» не говорит, чей клиент — про колонку надо спросить отдельно."""
+        self.assertFalse(sa.answers_this(sa.ASK_WHO, "вносить"))
+        self.assertFalse(sa.answers_this(sa.ASK_WHO, "разовый"))
+
+    def test_who_question_closed_by_manager_name(self):
+        self.assertTrue(sa.answers_this(sa.ASK_WHO, "Дарья"))
+        self.assertTrue(sa.answers_this(sa.ASK_WHO, "соня"))
+
+    def test_who_question_closed_by_refusal(self):
+        """«Не вношу» — клиент уезжает в ИСКЛЮЧЕНИЯ, колонка больше не нужна."""
+        self.assertTrue(sa.answers_this(sa.ASK_WHO, "не вносить"))
+
+    def test_no_answer_means_ask(self):
+        self.assertFalse(sa.answers_this(sa.ASK_ADD, None))
+        self.assertFalse(sa.answers_this(sa.ASK_WHO, None))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

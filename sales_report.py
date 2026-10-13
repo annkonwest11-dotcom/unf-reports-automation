@@ -607,6 +607,7 @@ def read_sheet(ws):
     header = vals[0] if vals else []
     cols = sheet_columns(header)
     mcols = manager_columns(header, first_col=cols["until"] + 1)
+    bot_col = max(mcols, default=FIRST_MANAGER_COL) + 2
     rows = []
     for idx, r in enumerate(vals[1:], start=2):
         def cell(i):
@@ -620,6 +621,8 @@ def read_sheet(ws):
                          created=cell(cols["created"]), kind=cell(cols["kind"]),
                          until=cell(cols["until"]),
                          sums={c: _num(cell(c)) for c in mcols},
+                         # черновик бота за колонкой ИТОГ: стоит, пока неизвестно, чей клиент
+                         bot=_num(cell(bot_col)),
                          # ★12.10.2026: прочерк в колонке менеджера — пометка Анны «клиент мой,
                          # сумма ещё не посчитана»; так заполнен весь лист, и это единственный
                          # способ узнать менеджера без бланка (правило 12)
@@ -897,8 +900,20 @@ def apply_plan(ws, plan, sheet, pending_rows=None, dry_run=False):
     letter = lambda col: re.sub(r"\d", "", a1(1, col))
     for row, text in plan["until"]:
         body.append({"range": f"{letter(cols['until'])}{row}", "values": [[text]]})
+    bot_col = max(sheet["managers"], default=FIRST_MANAGER_COL) + 2
     for row, col, amount, note in plan["amount"]:
         body.append({"range": gspread.utils.rowcol_to_a1(row, col), "values": [[amount]]})
+    # черновик «сумма по 1С (бот)» нужен, только пока неизвестно, чей клиент: как
+    # сумма встала в колонку менеджера, дубль за ИТОГ чистим. ★13.10.2026 на ТЭМУ:
+    # привязать очистку к ЗАПИСИ суммы было мало — сумма уже стояла в листе с
+    # прошлого прогона, и дубль остался висеть
+    поставлено = {row for row, col, _, _ in plan["amount"] if col != bot_col}
+    for s in sheet["rows"]:
+        if s.get("bot") is None:
+            continue
+        if s["row"] in поставлено or any(v for v in s["sums"].values()):
+            body.append({"range": gspread.utils.rowcol_to_a1(s["row"], bot_col),
+                         "values": [[""]]})
     # правило 13: пустую колонку «Юр лицо» заполняем тем, на что реально идут
     # отгрузки; заполненную Анной не трогаем — только примечание под ней
     for m in plan.get("entities", []):
@@ -925,17 +940,12 @@ def apply_plan(ws, plan, sheet, pending_rows=None, dry_run=False):
         start = plan_append_start(ws)
         # сумму кандидата кладём ЗА колонкой ИТОГ: колонки менеджеров — ручные, и
         # пока Анна не сказала, чей это клиент, число в них попасть не должно
-        sum_col = max(sheet["managers"], default=FIRST_MANAGER_COL) + 2
-        values = []
+        sum_col = bot_col
+        values, money_cols = [], []
         for r in pending_rows:
-            row = [""] * sum_col
-            row[cols["restaurant"] - 1] = r["client"]
-            row[cols["created"] - 1] = (f"{'первый заказ' if r['kind'] == 'новый' else 'вернули'} "
-                                        f"{r['event']:%d.%m}")
-            row[cols["kind"] - 1] = "ждёт подтверждения"
-            row[cols["until"] - 1] = f"по {r['window_end']:%d.%m}"
-            row[sum_col - 1] = r["amount"]
+            row, col = pending_row(r, cols, sum_col, sheet["managers"])
             values.append(row)
+            money_cols.append(col)
         ws.insert_rows(values, row=start, value_input_option="USER_ENTERED")
         last = start + len(values) - 1
         ws.format(f"A{start}:{gspread.utils.rowcol_to_a1(last, sum_col)}",
@@ -945,8 +955,39 @@ def apply_plan(ws, plan, sheet, pending_rows=None, dry_run=False):
         for i, r in enumerate(pending_rows):
             note = beby_note(r)
             if note:
-                ws.update_note(gspread.utils.rowcol_to_a1(start + i, sum_col), note)
+                ws.update_note(gspread.utils.rowcol_to_a1(start + i, money_cols[i]), note)
     return len(body)
+
+
+# Вид события так, как его пишет в колонке классификации сама Анна: в расчёте
+# «кандидат» — это догадка 1С «похож на возврат», в листе у неё это «вернули»
+SHEET_KIND = {"новый": "новый", "кандидат": "вернули",
+              "вернули": "вернули", "разовый": "разовый"}
+SANCTIONED = ("бланк", "ответ Анны")      # чем подтверждается строка, кроме догадки 1С
+
+
+def pending_row(r, cols, sum_col, managers=None):
+    """Строка для вставки в лист + колонка, в которую легла сумма.
+
+    ★13.10.2026: «ждёт подтверждения» ставим ТОЛЬКО догадке 1С. Если санкция
+    человека уже есть — бланк менеджера или кнопка Анны, — вид события известен, и
+    строка не должна выглядеть неразобранной: Анна ответила «вношу» про ТЭМУ, а в
+    листе всё равно стояло «ждёт подтверждения». По той же причине сумма идёт в
+    колонку названного менеджера, а за колонку ИТОГ («сумма по 1С (бот)») уезжает
+    только тогда, когда чей это клиент ещё неизвестно: иначе число не попадает ни
+    в итог листа, ни в борд РОПа.
+    """
+    row = [""] * sum_col
+    row[cols["restaurant"] - 1] = r["client"]
+    row[cols["created"] - 1] = (f"{'первый заказ' if r['kind'] == 'новый' else 'вернули'} "
+                                f"{r['event']:%d.%m}")
+    row[cols["kind"] - 1] = (SHEET_KIND.get(r["kind"], r["kind"])
+                             if r.get("source") in SANCTIONED else PENDING_MARK)
+    row[cols["until"] - 1] = f"по {r['window_end']:%d.%m}"
+    col = next((c for c, name in (managers or {}).items()
+                if r.get("manager") and name == r["manager"]), sum_col)
+    row[col - 1] = r["amount"]
+    return row, col
 
 
 def write_entity_notes(ws, marks, col="B", col_num=COL_ENTITY):

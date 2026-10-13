@@ -260,6 +260,26 @@ def match_answer(client: str, answers: dict) -> str | None:
     return None
 
 
+def answers_this(kind: str, verdict: str | None) -> bool:
+    """Закрывает ли уже полученный вердикт именно ЭТОТ вопрос.
+
+    ★13.10.2026: «вношу / не вношу / разовый» отвечают на вопрос «вносить ли
+    клиента», но НЕ говорят, чей он. На этом ТЭМУ застрял без колонки: Анна
+    нажала «вношу», строка встала в лист, а вопрос «в чью колонку сумма» бот
+    больше не задавал — сумма так и висела за колонкой ИТОГ, то есть вне итога
+    листа и вне борда РОПа. Вопрос про колонку закрывают только имя менеджера
+    (его сумма туда и пойдёт) и «не вношу» (клиент уезжает в ИСКЛЮЧЕНИЯ).
+    """
+    if not verdict:
+        return False
+    if kind != ASK_WHO:
+        return True
+    if verdict == "не вносить":
+        return True
+    from sales_report import manager_from_note      # цикл импорта: только внутри
+    return bool(manager_from_note(verdict))
+
+
 def _flat(s):
     return re.sub(r"[^\w]", "", str(s or "").lower().replace("ё", "е"))
 
@@ -283,7 +303,7 @@ def ask_rows(rows, answers, state, dry_run=False, limit=LIMIT, now=None,
             logger.info("предел вопросов за прогон (%s) — остальных спрошу в следующий раз", limit)
             break
         key = f"{kind}:{_flat(r['client'])}"
-        if key in state["asked"] or match_answer(r["client"], answers):
+        if key in state["asked"] or answers_this(kind, match_answer(r["client"], answers)):
             continue
         if kind == ASK_WHO:
             text, options = manager_question(r, managers, rows_in_sheet.get(r["client"]))
