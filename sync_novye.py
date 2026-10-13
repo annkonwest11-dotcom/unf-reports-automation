@@ -140,6 +140,17 @@ def _open(gc=None):
     return gc
 
 
+def klass_column(headers):
+    """Индекс колонки «Классифицкация» в листе KPI.
+
+    ★12.10.2026 Анна попросила колонку «База 1С» третьей, и классификация уехала
+    с D на E. Берём по шапке: иначе «вернули» перестаёт распознаваться, а на этом
+    держатся расхождения ответственных в СПРАВОЧНИКЕ.
+    """
+    return next((i for i, h in enumerate(headers)
+                 if "классиф" in (h or "").strip().lower()), 3)
+
+
 def sync_novye(dry_run=False):
     """Возвращает отчёт: {novye_rows, novye_total, added:[(name,B,C)], discrepancies:
     [(client, kpi_mgr, spr_current)], no_data:[name]}."""
@@ -161,6 +172,7 @@ def sync_novye(dry_run=False):
     # колонки менеджеров
     mgr_cols = {i: KPI_MANAGERS[kpi_key(headers[i])]
                 for i in range(len(headers)) if kpi_key(headers[i]) in KPI_MANAGERS}
+    klass_col = klass_column(headers)
 
     # ── 1) НОВЫЕ_КЛИЕНТЫ: суммы новых продаж (числовые) ──────────────────────
     nk_rows = []
@@ -198,7 +210,7 @@ def sync_novye(dry_run=False):
         if not rest:
             continue
         ur = row[1] if len(row) > 1 else ""
-        klass = (row[3] if len(row) > 3 else "").strip().lower()
+        klass = (row[klass_col] if len(row) > klass_col else "").strip().lower()
         mgr = None
         for ci, mt in mgr_cols.items():
             if ci < len(row) and row[ci].strip():
