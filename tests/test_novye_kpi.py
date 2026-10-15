@@ -27,6 +27,21 @@ class TestKpiHeaders(unittest.TestCase):
            "Менеджер Дарья", "Менеджер Алена", "Менеджер Ксения", "Менеджер Лилия",
            "Анна", "Влада", "ИТОГ"]
 
+    BASE = ["Ресторан", "Юр лицо", "База 1С", "Создан", "Классифицкация",
+            "до какого числа", "Дарья", "Алена", "Ксения", "Лилия", "София",
+            "Виолетта", "Анна", "ИТОГ"]
+
+    def test_klass_column_follows_header(self):
+        """★12.10.2026: с колонкой «База 1С» классификация уехала с D (3) на E (4)."""
+        from sync_novye import klass_column
+        self.assertEqual(klass_column(self.SEPT), 3)
+        self.assertEqual(klass_column(self.BASE), 4)
+        self.assertEqual(klass_column(["Ресторан", "Юр лицо"]), 3)   # нет колонки — старое место
+
+    def test_base_column_is_not_a_manager(self):
+        from sync_novye import KPI_MANAGERS, kpi_key
+        self.assertNotIn(kpi_key("База 1С"), KPI_MANAGERS)
+
     def test_headers_without_prefix(self):
         self.assertEqual(
             managers(self.SEPT),

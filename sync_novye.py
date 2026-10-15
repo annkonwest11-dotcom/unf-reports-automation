@@ -22,6 +22,8 @@ from datetime import date
 import gspread
 from google.oauth2.service_account import Credentials
 
+from sync_odata import SHEET_BASES
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -37,6 +39,14 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
+
+# Листы ДАННЫЕ_* — по одному на ИП; берём из sync_odata, чтобы новая база (как
+# Володихина 09.10.2026) подхватывалась и здесь: и в формулу оборота, и в подбор
+# имени для новой строки СПРАВОЧНИКА. Пока базы тут были вписаны руками, клиент,
+# который живёт ТОЛЬКО в новой базе, получал в СПРАВОЧНИК короткое имя из KPI
+# («ООО АНУТА» вместо «РЕСТОРАН ОРАНДЖ (ООО АНУТА) ЭДО») — и ВПР в ДАННЫХ его
+# не находил, менеджер не проставлялся.
+DATA_SHEETS = [cfg["sheet_name"] for cfg in SHEET_BASES.values()]
 
 SPR_START = 4          # СПРАВОЧНИК: данные с 4-й строки
 NK_CLEAR = "A4:H203"   # НОВЫЕ_КЛИЕНТЫ: диапазон очистки
@@ -130,6 +140,17 @@ def _open(gc=None):
     return gc
 
 
+def klass_column(headers):
+    """Индекс колонки «Классифицкация» в листе KPI.
+
+    ★12.10.2026 Анна попросила колонку «База 1С» третьей, и классификация уехала
+    с D на E. Берём по шапке: иначе «вернули» перестаёт распознаваться, а на этом
+    держатся расхождения ответственных в СПРАВОЧНИКЕ.
+    """
+    return next((i for i, h in enumerate(headers)
+                 if "классиф" in (h or "").strip().lower()), 3)
+
+
 def sync_novye(dry_run=False):
     """Возвращает отчёт: {novye_rows, novye_total, added:[(name,B,C)], discrepancies:
     [(client, kpi_mgr, spr_current)], no_data:[name]}."""
@@ -151,6 +172,7 @@ def sync_novye(dry_run=False):
     # колонки менеджеров
     mgr_cols = {i: KPI_MANAGERS[kpi_key(headers[i])]
                 for i in range(len(headers)) if kpi_key(headers[i]) in KPI_MANAGERS}
+    klass_col = klass_column(headers)
 
     # ── 1) НОВЫЕ_КЛИЕНТЫ: суммы новых продаж (числовые) ──────────────────────
     nk_rows = []
@@ -165,8 +187,9 @@ def sync_novye(dry_run=False):
             sr = len(nk_rows) + SPR_START
             # ru-локаль: разделитель аргументов «;». IFERROR на КАЖДЫЙ VLOOKUP,
             # чтобы клиент, который есть только в одной базе, отдавал свой оборот.
-            formula = (f"=IFERROR(VLOOKUP(B{sr};ДАННЫЕ_Губарев!$A$4:$L$503;12;0);0)"
-                       f"+IFERROR(VLOOKUP(B{sr};ДАННЫЕ_Перфильев!$A$4:$L$503;12;0);0)")
+            formula = "=" + "+".join(
+                f"IFERROR(VLOOKUP(B{sr};{sh}!$A$4:$L$503;12;0);0)"
+                for sh in DATA_SHEETS)
             nk_rows.append([date.today().isoformat(), rest, mname,
                             f"из КПИ {kpi_name}", kpi_name, amt, amt, formula])
     novye_total = sum(r[6] for r in nk_rows)
@@ -177,7 +200,7 @@ def sync_novye(dry_run=False):
     spr_cands = [((SPR_START + i, r), (r[0] if r else ""))
                  for i, r in enumerate(spr_vals) if r and r[0].strip()]
     data_names = []
-    for sh in ("ДАННЫЕ_Губарев", "ДАННЫЕ_Перфильев"):
+    for sh in DATA_SHEETS:
         data_names += [(None, v) for v in ss.worksheet(sh).col_values(1)[3:] if v.strip()]
 
     added, discrepancies, no_data = [], [], []
@@ -187,7 +210,7 @@ def sync_novye(dry_run=False):
         if not rest:
             continue
         ur = row[1] if len(row) > 1 else ""
-        klass = (row[3] if len(row) > 3 else "").strip().lower()
+        klass = (row[klass_col] if len(row) > klass_col else "").strip().lower()
         mgr = None
         for ci, mt in mgr_cols.items():
             if ci < len(row) and row[ci].strip():
