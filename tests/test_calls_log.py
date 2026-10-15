@@ -1,7 +1,7 @@
 """Журнал звонков по сменам (лист ЗВОНКИ) — вход для нормы Виолетты.
 
 Норма из её индивидуальных условий считается за месяц и по каждой смене
-(«в среднем не менее 30 успешных, и ни одной смены ниже 25»), поэтому цифры из
+(«в среднем не менее 30, и ни одной смены ниже 25»), поэтому цифры из
 отчётов смен нужно накапливать, а не только сравнивать с порогом.
 
 Запуск:  python -m unittest discover -s tests -v
@@ -58,7 +58,9 @@ class TestLogCalls(unittest.TestCase):
     _POISK = ("Смена Менеджер поиск\nСотрудник: Виолетта Караханова\nДата: 14\n"
               "Выполненные задачи: звонила по базе\n")
 
-    def test_razbivka_uspeshnye_ot_minuty(self):
+    def test_razbivka_hranitsya_no_v_normu_idet_vsego(self):
+        # ★Анна 15.10.2026: норма считается по «Звонки всего»; разбивку по
+        # длительности храним, если её заполнили, но в норму она не идёт.
         sc = self._client()
         ok = sc.log_calls(self._report(
             self._POISK + "Звонки всего: 40\nЗвонки < 1 мин: 8\nЗвонки 1-2 мин: 20\n"
@@ -66,22 +68,21 @@ class TestLogCalls(unittest.TestCase):
         self.assertTrue(ok)
         row = self.ws.appended[0]
         self.assertEqual(row[:3], ["Октябрь 2026", 14, "Виолетта Караханова"])
-        self.assertEqual(row[3], 40)          # всего
-        self.assertEqual(row[8], 32)          # успешные: 20 + 10 + 2, короткие не в счёт
+        self.assertEqual(row[3], 40)                     # всего — по нему норма
+        self.assertEqual(row[4:8], [8, 20, 10, 2])       # разбивка сохранена
 
-    def test_bez_razbivki_uspeshnye_vse(self):
-        # разбивку по длительности заполняют не всегда — тогда берём «всего»
+    def test_bez_razbivki_tolko_vsego(self):
         sc = self._client()
         sc.log_calls(self._report(self._POISK + "Звонки всего: 31"), "Октябрь 2026")
         row = self.ws.appended[0]
         self.assertEqual(row[3], 31)
-        self.assertEqual(row[8], 31)
+        self.assertEqual(row[4:8], [0, 0, 0, 0])
 
     def test_povtornaya_smena_obnovlyaet_stroku(self):
         # ту же смену присылают заново (поправить задачи) — журнал не должен пухнуть
         ws = _FakeCallsWS([SheetsClient.CALLS_HEADER[:],
                            ["Октябрь 2026", "14", "Виолетта Караханова", "20",
-                            "0", "20", "0", "0", "20", "2026-10-14 18:00"]])
+                            "0", "20", "0", "0", "2026-10-14 18:00"]])
         sc = self._client(ws)
         sc.log_calls(self._report(self._POISK + "Звонки всего: 33"), "Октябрь 2026")
         self.assertEqual(ws.appended, [])
