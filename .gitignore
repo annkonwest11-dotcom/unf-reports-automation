@@ -28,3 +28,10 @@ avans_state.json
 .env.bak*
 otvetstvennye_state.json
 zp_send_state.json
+
+# --- Рабочее состояние отчёта по продажам (у кого уже спросили, прошлый срез) ---
+sales_asked.json
+sales_report_last.json
+
+# --- Отдельный проект, живёт в этой же папке ---
+marina/
