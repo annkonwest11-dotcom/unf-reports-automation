@@ -404,3 +404,86 @@ class TestPaceFlag(unittest.TestCase):
         self.assertNotIn("Дарья", names)
         self.assertNotIn("Анна", names)
         self.assertNotIn("Ксения", names)   # факта нет — не ругаемся
+
+
+class TestЗапаснаяМодель(unittest.TestCase):
+    """★15.10.2026: отключение модели не должно оставлять борд без разбора.
+
+    Раньше модель была одна — сняли бы её, и борд молча показывал бы статусы
+    только по стадиям сделок, без причин и следующих шагов.
+    """
+
+    def setUp(self):
+        os.environ["OPENROUTER_API_KEY"] = "ключ-для-теста"
+        self.addCleanup(os.environ.pop, "OPENROUTER_API_KEY", None)
+        for k in ("BOARD_LLM_MODELS", "BOARD_LLM_MODEL"):
+            os.environ.pop(k, None)
+
+    def _ответ(self, данные):
+        class R:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                import json as j
+                return {"choices": [{"message": {"content": j.dumps(данные)}}]}
+        return R()
+
+    def _отказ(self):
+        class R:
+            status_code = 404
+
+            def raise_for_status(self):
+                raise RuntimeError("404 model not found")
+        return R()
+
+    def test_цепочка_по_умолчанию_не_из_одного_вендора(self):
+        модели = rb.board_models()
+        self.assertGreater(len(модели), 1, "запасная модель должна быть")
+        вендоры = {m.split("/")[0] for m in модели}
+        self.assertGreater(len(вендоры), 1, "запас у того же вендора — не запас")
+
+    def test_основная_не_отвечает_разбирает_запасная(self):
+        from unittest import mock
+        видели = []
+
+        def fake_post(url, **kwargs):
+            видели.append(kwargs["json"]["model"])
+            if len(видели) == 1:
+                return self._отказ()
+            return self._ответ({"7": {"status": "ждём оплату", "action": "позвонить"}})
+
+        with mock.patch.object(rb.requests, "post", side_effect=fake_post), \
+             mock.patch.dict(rb.STATUS_TITLES, {"ждём оплату": "Ждём оплату"}):
+            got = rb.llm_classify([{"id": 7, "stage": "C1:NEW", "note": ""}])
+
+        self.assertEqual(got, {"7": {"status": "ждём оплату", "action": "позвонить"}})
+        self.assertEqual(len(видели), 2, "после отказа должна пробоваться вторая модель")
+        self.assertNotEqual(видели[0], видели[1])
+
+    def test_рабочая_модель_запоминается_на_следующие_партии(self):
+        """Долбиться в мёртвую модель на каждой партии незачем."""
+        from unittest import mock
+        видели = []
+
+        def fake_post(url, **kwargs):
+            видели.append(kwargs["json"]["model"])
+            if видели[-1] == rb.board_models()[0]:
+                return self._отказ()
+            return self._ответ({})
+
+        items = [{"id": i, "stage": "C1:NEW", "note": ""} for i in range(25)]
+        with mock.patch.object(rb.requests, "post", side_effect=fake_post):
+            rb.llm_classify(items)
+
+        # 2 партии: первая — отказ + запасная, вторая — сразу запасная
+        self.assertEqual(len(видели), 3)
+        self.assertEqual(видели[1], видели[2])
+
+    def test_все_модели_молчат_борд_не_падает(self):
+        from unittest import mock
+        with mock.patch.object(rb.requests, "post", side_effect=lambda *a, **k: self._отказ()):
+            got = rb.llm_classify([{"id": 1, "stage": "C1:NEW", "note": ""}])
+        self.assertEqual(got, {}, "разбора нет, но борд должен построиться")
