@@ -727,7 +727,11 @@ class SheetsClient:
 
         if title in {w.title for w in sh.worksheets()}:
             sh.del_worksheet(sh.worksheet(title))
-        aws = sh.add_worksheet(title=title, rows=total_rows, cols=maxc, index=0)
+        # ★15.10.2026 (Анна: «архивные листы переноси в конец, они мешают»):
+        # архив месяца создаём ПОСЛЕДНИМ листом. Раньше стоял index=0 и каждое
+        # закрытие месяца выкидывало архив в начало, перед рабочими листами.
+        aws = sh.add_worksheet(title=title, rows=total_rows, cols=maxc,
+                               index=len(sh.worksheets()))
         aid = aws.id
         aws.update(matrix, "A1", value_input_option="RAW")
 

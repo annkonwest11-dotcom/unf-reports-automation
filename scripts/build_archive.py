@@ -73,7 +73,8 @@ total_rows=len(matrix)+5
 try:
     sh.del_worksheet(sh.worksheet(title)); print("Старый",title,"удалён")
 except gspread.WorksheetNotFound: pass
-aws=sh.add_worksheet(title=title, rows=total_rows, cols=maxc, index=0); aid=aws.id
+# архив — последним листом (Анна: архивы в конец, они мешают)
+aws=sh.add_worksheet(title=title, rows=total_rows, cols=maxc, index=len(sh.worksheets())); aid=aws.id
 aws.update(matrix, "A1", value_input_option="RAW")
 print(f"Значения записаны: {len(matrix)} строк × {maxc} колонок")
 
