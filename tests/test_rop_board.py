@@ -487,3 +487,9 @@ class TestЗапаснаяМодель(unittest.TestCase):
         with mock.patch.object(rb.requests, "post", side_effect=lambda *a, **k: self._отказ()):
             got = rb.llm_classify([{"id": 1, "stage": "C1:NEW", "note": ""}])
         self.assertEqual(got, {}, "разбора нет, но борд должен построиться")
+
+    def test_в_цепочке_есть_бесплатная_ступень(self):
+        """На пустом счету OpenRouter платные модели отвечать перестанут."""
+        модели = rb.board_models()
+        self.assertTrue(any(m.endswith(":free") for m in модели),
+                        "нужна модель с нулевой ценой как последний рубеж")

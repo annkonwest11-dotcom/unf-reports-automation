@@ -345,9 +345,12 @@ def board_models(model=None):
     chain = os.environ.get("BOARD_LLM_MODELS", "")
     if chain.strip():
         return [m.strip() for m in chain.split(",") if m.strip()]
+    # последняя ступень — «:free»: цена 0, значит работает и когда на
+    # OpenRouter кончились деньги. Разбор похуже, но он есть.
     return [os.environ.get("BOARD_LLM_MODEL", "anthropic/claude-haiku-4.5"),
             "google/gemini-2.5-flash-lite",
-            "deepseek/deepseek-chat-v3.1"]
+            "deepseek/deepseek-chat-v3.1",
+            "nvidia/nemotron-3.5-lightning:free"]
 
 
 def llm_classify(items, model=None):
