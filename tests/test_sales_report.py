@@ -10,10 +10,11 @@ import sys
 import gspread
 import unittest
 from unittest import mock
-from datetime import date
+from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import sales_ask
 import sales_report as sr
 
 
@@ -908,6 +909,134 @@ class TestApplyPlanClearsBotColumn(unittest.TestCase):
         sr.apply_plan(ws, plan, sheet)
         got = {b["range"]: b["values"][0][0] for b in ws.body}
         self.assertEqual(got, {"J58": ""})
+
+
+class TestBlankOrphans(unittest.TestCase):
+    """★САВВА, 15.10.2026: бланк есть, а по 1С события нет — спрашиваем Анну.
+
+    Бланк «возвращённый клиент» менеджер оформил, а в 1С разрыв 24 дня при пороге
+    RETURN_GAP=28: `classify` события не дал, `attach_blanks` дописывать было
+    некуда — и слово менеджера пропало молча, ни строки, ни вопроса. Решение Анны:
+    порог не менять, а в таком случае писать ей.
+    """
+
+    CARD = "SAVVA (ООО БРАНЧ) ЭДО"
+
+    def hist(self):
+        # клиент давний (первая накладная 2025) и ходит ритмом 2 дня до 21.09,
+        # потом пауза и заказ 15.10 — разрыв 24 дня, то есть меньше порога
+        items = [(date(2025, 7, 1), 5_000.0), (date(2026, 8, 30), 3_000.0)]
+        items += [(date(2026, 9, 1) + timedelta(days=2 * i), 3_000.0) for i in range(11)]
+        items.append((date(2026, 10, 15), 6_280.0))
+        return {self.CARD: items}
+
+    def blank(self, **kw):
+        base = dict(kind="вернули", client="Савва", entity="Savva ООО Бранч",
+                    manager="GREENCH Микрозель и съедобные цветы", date=date(2026, 10, 15))
+        base.update(kw)
+        return base
+
+    def orphan(self, **kw):
+        """Строка-сирота так, как её делает прогон."""
+        blanks = [self.blank(**kw)]
+        sr.attach_blanks([], blanks)
+        return sr.blank_orphans(blanks, self.hist(), "2026-10")
+
+    def test_1c_sees_no_event_at_all(self):
+        """Та самая причина: 24 дня тишины меньше порога 28 — строки в расчёте нет."""
+        self.assertEqual(sr.classify(self.hist(), "2026-10"), [])
+
+    def test_blank_without_event_becomes_row(self):
+        """Сирота считается как все: карточка 1С, окно +30 дней, сумма из окна."""
+        rows = self.orphan()
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertEqual(r["client"], self.CARD)
+        self.assertEqual((r["kind"], r["event"], r["window_end"]),
+                         ("вернули", date(2026, 10, 15), date(2026, 11, 13)))
+        self.assertEqual((r["amount"], r["gap"], r["rhythm"]), (6_280.0, 24, 2))
+        self.assertTrue(r["in_1c"])
+
+    def test_orphan_is_not_written_to_live_sheet_by_itself(self):
+        """Решение Анны «писать мне»: источник не в SANCTIONED, сама не вношу."""
+        r = self.orphan()[0]
+        self.assertEqual(r["source"], sales_ask.BLANK_NO_EVENT)
+        self.assertNotIn(r["source"], sr.SANCTIONED)
+
+    def test_orphan_is_asked_about(self):
+        """Но вопрос кнопками по нему уходит — иначе бланк снова потеряется."""
+        self.assertIn(sales_ask.BLANK_NO_EVENT, sr.ASK_SOURCES)
+
+    def test_group_name_is_not_a_manager(self):
+        """Бланк пришёл от имени канала — менеджера из названия группы не выдумываем."""
+        self.assertIsNone(self.orphan()[0]["manager"])
+
+    def test_known_author_becomes_manager(self):
+        """А если автор свой — менеджер известен сразу (правило 8)."""
+        self.assertEqual(self.orphan(manager="даша")[0]["manager"], "Дарья Вольнова")
+
+    def test_attached_blank_makes_no_orphan(self):
+        """Бланк лёг на строку расчёта — дубля сиротой не создаём."""
+        calc = dict(client=self.CARD, kind="кандидат", source="1С", manager=None,
+                    amount=6_280.0, event=date(2026, 10, 15))
+        blanks = [self.blank()]
+        sr.attach_blanks([calc], blanks)
+        self.assertEqual(sr.blank_orphans(blanks, self.hist(), "2026-10"), [])
+
+    def test_no_card_in_1c_keeps_blank_name_and_zero(self):
+        """Карточку не нашли — строка всё равно уходит Анне, с нулём и именем из бланка."""
+        r = self.orphan(client="Кафе Неведомое", entity="ООО Неведомое")[0]
+        self.assertEqual(r["client"], "Кафе Неведомое ООО Неведомое")
+        self.assertEqual((r["amount"], r["in_1c"]), (0.0, False))
+        self.assertEqual(r["event"], date(2026, 10, 15))
+
+    def test_closed_window_is_not_dragged_into_this_sheet(self):
+        """Бланк прошлого месяца с закрытым окном в октябрьский лист не тянем."""
+        self.assertEqual(self.orphan(date=date(2026, 9, 1)), [])
+
+    def test_event_date_is_the_order_not_the_blank(self):
+        """Бланк на день позже заказа — окно считаем от заказа (как по 1С)."""
+        r = self.orphan(date=date(2026, 10, 16))[0]
+        self.assertEqual((r["event"], r["window_end"]),
+                         (date(2026, 10, 15), date(2026, 11, 13)))
+
+    def test_answer_vnoshu_sends_the_row_to_the_sheet(self):
+        """После «вношу» строка становится санкционированной и идёт в живой лист."""
+        rows, refused = sr.apply_answers(self.orphan(), {self.CARD: "вносить"})
+        self.assertEqual(refused, [])
+        self.assertEqual(rows[0]["source"], "ответ Анны")
+        self.assertIn(rows[0]["source"], sr.SANCTIONED)
+
+    def test_summary_has_its_own_block(self):
+        """В сводке — отдельный раздел, а не молчание."""
+        rows = self.orphan()
+        plan = sr.plan_sheet(rows, dict(header=[], managers={6: "Дарья Вольнова"},
+                                        rows=[], last_row=1), "2026-10")
+        text = sr.summary_text("2026-10", plan, rows)
+        self.assertIn("БЛАНК ЕСТЬ, А ПО 1С СОБЫТИЯ НЕТ", text)
+        self.assertIn("SAVVA", text)
+        self.assertIn("молчал 24 дн", text)
+
+    def test_orphan_already_in_sheet_changes_nothing(self):
+        """★ДКР Истра: клиент в листе стоит и ходит ритмом 1.5 дня — сумму окна
+        бланка (96 878 ₽ за весь месяц) в лист не пишем и вопрос не задаём."""
+        sheet = dict(header=[], managers={6: "Дарья Вольнова"},
+                     rows=[dict(row=9, restaurant="SAVVA", entity="ООО БРАНЧ",
+                                created="вернули 15.10", kind="вернули", until="по 13.11",
+                                sums={6: 4_000.0}, dashes=[])],
+                     last_row=9)
+        plan = sr.plan_sheet(self.orphan(), sheet, "2026-10")
+        self.assertEqual((plan["amount"], plan["conflicts"], plan["ask"]), ([], [], []))
+        self.assertEqual([u["row"] for u in plan["unmatched_sheet"]], [9])
+
+    def test_orphan_is_not_reported_as_without_blank(self):
+        """«Новые по 1С без бланка» — только без бланка: бланк у сироты ЕСТЬ."""
+        rows = self.orphan(kind="новый")
+        plan = sr.plan_sheet(rows, dict(header=[], managers={6: "Дарья Вольнова"},
+                                        rows=[], last_row=1), "2026-10")
+        text = sr.summary_text("2026-10", plan, rows)
+        self.assertNotIn("НОВЫЕ по 1С без бланка", text)
+        self.assertIn("БЛАНК ЕСТЬ, А ПО 1С СОБЫТИЯ НЕТ", text)
 
 
 if __name__ == "__main__":
