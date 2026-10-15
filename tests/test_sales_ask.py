@@ -176,6 +176,20 @@ class TestApplyAnswers(unittest.TestCase):
                                 {"РУБЕЛЬ (ООО АВА ЦЕНТР)": {}}, today=date(2026, 10, 13))
         w.assert_not_called()
 
+    def test_same_client_twice_in_one_run_is_written_once(self):
+        """★15.10.2026: СИКСТИ и ДРАЙ БАР уехали в лист дважды за один прогон."""
+        with mock.patch.object(sr, "write_excluded") as w:
+            sr.remember_refused(mock.Mock(), [calc(), calc()], {}, today=date(2026, 10, 15))
+        self.assertEqual(w.call_args.args[1],
+                         [("РУБЕЛЬ (ООО АВА ЦЕНТР)", sr.REFUSED_REASON)])
+
+    def test_other_spelling_of_the_same_client_is_recognised(self):
+        """★ДЖЕМ: имя из бланка «ДЖЕМ ООО ДЖЕМ» — тот же, что «ДЖЕМ (ООО ДЖЕМ)» в листе."""
+        with mock.patch.object(sr, "write_excluded") as w:
+            sr.remember_refused(mock.Mock(), [calc(client="ДЖЕМ ООО ДЖЕМ")],
+                                {"ДЖЕМ (ООО ДЖЕМ)": {}}, today=date(2026, 10, 15))
+        w.assert_not_called()
+
 
 class TestOrphanRefusals(unittest.TestCase):
     """«Не вношу» про того, кого в расчёте нет (★ДЖЕМ, 13.10.2026)."""
@@ -199,6 +213,19 @@ class TestOrphanRefusals(unittest.TestCase):
         rows = [calc(client="ДЖЕМ (ООО ДЖЕМ)")]
         self.assertEqual(sr.refused_orphans({"ДЖЕМ (ООО ДЖЕМ)": "не вносить"},
                                             self.STATE, rows), [])
+
+    def test_refusal_from_calc_is_not_counted_twice(self):
+        """★15.10.2026, как в прогоне: apply_answers уже забрал клиента себе.
+
+        refused_orphans получал список БЕЗ него и считал сиротой — в лист
+        ИСКЛЮЧЕНИЯ ехал дубль. Поэтому сирот ищем среди rows + refused.
+        """
+        answers = {"РУБЕЛЬ (ООО АВА ЦЕНТР)": "не вносить"}
+        state = {"asked": {"вносить:рубельоооавацентр":
+                           {"client": "РУБЕЛЬ (ООО АВА ЦЕНТР)"}}}
+        rows, refused = sr.apply_answers([calc()], answers)
+        self.assertEqual((rows, len(refused)), ([], 1))
+        self.assertEqual(sr.refused_orphans(answers, state, rows + refused), [])
 
     def test_other_verdicts_are_not_orphans(self):
         self.assertEqual(sr.refused_orphans({"ДЖЕМ (ООО ДЖЕМ)": "вносить"}, self.STATE, []), [])

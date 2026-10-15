@@ -1664,8 +1664,25 @@ def refused_orphans(answers, state, rows):
 
 
 def remember_refused(ss, refused, excluded, today=None):
-    """«Не вношу» — в лист ИСКЛЮЧЕНИЯ: иначе в следующем месяце спросим снова."""
-    new = [(r["client"], REFUSED_REASON) for r in refused if r["client"] not in excluded]
+    """«Не вношу» — в лист ИСКЛЮЧЕНИЯ: иначе в следующем месяце спросим снова.
+
+    ★15.10.2026 — ДУБЛИ: сравнивали имена строкой, и один прогон добавил в лист
+    пять строк вместо двух. «ДЖЕМ ООО ДЖЕМ» (имя из бланка, карточки в 1С нет) не
+    узнало «ДЖЕМ (ООО ДЖЕМ)», уже стоявшее в листе, а СИКСТИ и ДРАЙ БАР пришли в
+    одном списке дважды — из apply_answers и из refused_orphans. Поэтому сверяем с
+    листом так же, как apply_excluded (по словам имени), и дедупим сам список.
+    """
+    index = so.build_token_index(list(excluded)) if excluded else None
+    new, seen = [], set()
+    for r in refused:
+        name = r["client"]
+        if name in excluded or (index and match_client(name, index, strict=True)):
+            continue
+        flat = sales_ask._flat(name)
+        if flat in seen:
+            continue
+        seen.add(flat)
+        new.append((name, REFUSED_REASON))
     if new:
         write_excluded(ss, new, (today or date.today()).strftime("%d.%m"))
         logger.info("в лист ИСКЛЮЧЕНИЯ добавлено по ответу Анны: %s", len(new))
@@ -1688,7 +1705,10 @@ def run(ym=None, live=False, dry_run=False, pending=True, today=None, ask=True):
     answers = sales_ask.read_answers(ask_state) if ask else {}
     excluded = load_excluded(ss)
     rows, refused = apply_answers(rows, answers)
-    refused += refused_orphans(answers, ask_state, rows)
+    # ★15.10.2026: сирот ищем среди ВСЕХ строк расчёта, включая только что
+    # отказанные — иначе отказ по клиенту из расчёта считался дважды и в лист
+    # ИСКЛЮЧЕНИЯ ехал дубль (так продублировались СИКСТИ и ДРАЙ БАР)
+    refused += refused_orphans(answers, ask_state, rows + refused)
     if refused and not dry_run:
         remember_refused(ss, refused, excluded, today=today)
     rows, dropped = apply_excluded(rows, excluded)

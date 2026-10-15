@@ -23,6 +23,7 @@ from html import escape
 import requests
 from dotenv import load_dotenv
 
+from sheets import SOPR_WEEKEND
 from sync_odata import (BASES, SHEET_BASES, DATA_START_ROW, _open_spreadsheet,
                         _parse_settings_period)
 
@@ -327,8 +328,18 @@ def build_support(sh, name, month, facts, pay, plan):
 
     out = [f"⭕️ЗП {SHORT[name]} ЗА {month} ⭕️",
            line("+", office, f"{int(cnt_main)} {shifts_word(cnt_main)} офис")]
-    if shifts - office:
-        out.append(line("+", shifts - office, "подработка в будни и выходные"))
+    extra_shifts = shifts - office
+    if extra_shifts:
+        # ★15.10.2026: подработка у сопровождения осталась только одна — смена в
+        # выходной по ставке SOPR_WEEKEND. Если сумма делится на неё ровно, пишем
+        # «N смен в выходные × 3600»; если нет (старые смены месяца считались из
+        # надбавок за фирмы и телефоны) — общей строкой, без вранья про ставку.
+        if cnt_extra and abs(extra_shifts - cnt_extra * SOPR_WEEKEND) < 1:
+            comment = (f"{int(cnt_extra)} {shifts_word(cnt_extra)} в выходные "
+                       f"× {SOPR_WEEKEND}")
+        else:
+            comment = "подработка в выходные"
+        out.append(line("+", extra_shifts, comment))
     out += [f"⭕️План на месяц {big(plan)}, факт {big(raw)} (без вычета беби) "
             f"({pct(plan_pct)} выполнения плана), итог с вычетом беби {big(base)} файл ниже 👇",
             line("+", oper, "1% от оплат клиентов")]

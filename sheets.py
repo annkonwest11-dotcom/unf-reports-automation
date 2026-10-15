@@ -22,6 +22,12 @@ MSK = timezone(timedelta(hours=3))
 # Валерии Папоян (2026-08-11); диапазоны покрывают ровно строки сотрудников.
 _SHIFT_DAY_RANGES = ('E5:AI12', 'E17:AI19')
 
+# Ставки смен менеджера сопровождения (★Анна, 15.10.2026): будний день — обычная
+# смена, выходной — подработка по одной ставке, без надбавок. Тарифы продублированы
+# в НАСТРОЙКИ листа (раздел «ТАРИФЫ СМЕН») — при изменении править оба места.
+SOPR_WEEKDAY = 2500
+SOPR_WEEKEND = 3600
+
 _MONTHS_RU = {
     'январ': 1, 'феврал': 2, 'март': 3, 'апрел': 4,
     'май': 5, 'мая': 5, 'июн': 6, 'июл': 7, 'август': 8,
@@ -250,15 +256,11 @@ class SheetsClient:
         stavka = employee_row[3].strip() if len(employee_row) > 3 else "1"
 
         if report.manager_type == "сопровождение" and re.search(r'выход', report.day_type.lower()):
-            phones = report.phones.strip()
-            firms = report.firms.strip().lower() in ("да", "yes", "+")
-            if phones == "2" and firms:
-                return "3900"
-            if phones == "1" and firms:
-                return "3600"
-            if phones == "2":
-                return "2100"
-            return "1800"
+            # ★15.10.2026 (Анна): у сопровождения одна ставка выходного — 3600,
+            # без надбавок за телефоны и фирмы. Прежние 1800/2100/3600/3900
+            # складывались из «заказов выходных» и «фирм», и этих пунктов в
+            # шаблоне больше нет.
+            return str(SOPR_WEEKEND)
 
         if report.shift_type.lower().strip() in ("подработка", "подработки"):
             side = report.side_job_type.lower()
@@ -306,27 +308,18 @@ class SheetsClient:
         return bool(main_row or side_row)
 
     def _update_soprovozhdenie(self, report: Report, ws, all_rows: list, day: int, col_num: int) -> bool:
-        # Шаблон «Смена Менеджер сопровождение»:
-        #   Тип будний → осн.смена 2500; выходной → осн. нет.
-        #   Фирмы=да → +1000, ★ТОЛЬКО В ВЫХОДНОЙ (решение Анны 05.09.2026:
-        #     «убираем ставку за фирмы в будни 1800, только в выхи 1000»).
-        #   Заказы выходные → 1800 независимо от числа телефонов: ★надбавка за
-        #     второй телефон (+300, было 2100) убрана совсем, там же.
-        #   Заказы будние (доп телефон да/нет): да → +1800.
-        #   Подработки = сумма компонентов (0 → пусто).
+        # Шаблон «Смена Менеджер сопровождение» (★новый с 15.10.2026, решение Анны):
+        # в нём остались только Сотрудник / Дата / Выполненные задачи / Тип.
+        #   будний  → осн.смена 2500, подработка пусто;
+        #   выходной → подработка 3600, осн. пусто.
+        # Надбавок больше нет: ни за «заказы будние» (доп. телефон), ни за «заказы
+        # выходные», ни за фирмы в выходной (+1000) — смены фирм Анна проводит
+        # доп.премией. Старые поля шаблона, если их кто-то пришлёт, игнорируем:
+        # платить по ним больше нечего.
         is_weekend = bool(re.search(r'выход', report.day_type.lower()))
-        firms_yes = report.firms.strip().lower().startswith(("да", "+", "yes"))
-        ow = report.orders_weekend.strip()             # "1" | "2" | ""
-        obd_yes = report.orders_weekday.strip().lower().startswith(("да", "+", "yes"))
 
-        main_val = "" if is_weekend else "2500"
-        side = 0
-        if firms_yes and is_weekend:
-            side += 1000
-        if re.search(r'[12]', ow):
-            side += 1800
-        if obd_yes:
-            side += 1800
+        main_val = "" if is_weekend else str(SOPR_WEEKDAY)
+        side_val = str(SOPR_WEEKEND) if is_weekend else ""
 
         main_row = self._find_employee_row(
             all_rows, report.employee, self._section_employee_rows(all_rows, "основные смены"))
@@ -335,11 +328,11 @@ class SheetsClient:
         if main_row:
             ws.update_cell(main_row, col_num, main_val)
         if side_row:
-            ws.update_cell(side_row, col_num, str(side) if side > 0 else "")
+            ws.update_cell(side_row, col_num, side_val)
         logger.info(
-            "Сопровождение %s день=%d: тип=%s осн=%s подраб=%s (firms=%s ow=%r будн.доп=%s)",
-            report.employee, day, "вых" if is_weekend else "будн", main_val or "—",
-            side or "—", firms_yes, ow, obd_yes,
+            "Сопровождение %s день=%d: тип=%s осн=%s подраб=%s",
+            report.employee, day, "вых" if is_weekend else "будн",
+            main_val or "—", side_val or "—",
         )
         return bool(main_row or side_row)
 

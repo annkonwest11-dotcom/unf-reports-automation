@@ -179,30 +179,36 @@ class TestShiftWriting(unittest.TestCase):
         self.assertEqual(got.get(7), "2500")
         self.assertEqual(got.get(14), "")
 
-    def test_soprovozhdenie_budniy_firmy(self):
-        # ★Анна 05.09.2026: за фирмы в БУДНИ не платим (было 1800) — только осн.смена.
-        got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: будний\nФирмы: да")
+    def test_soprovozhdenie_novyy_shablon_budniy(self):
+        # ★Новый шаблон Анны (15.10.2026): только Сотрудник / Дата / Задачи / Тип.
+        # «Тип(выходной/будний):» пишут без пробела перед скобкой — тоже читаем.
+        got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\n"
+                        "Дата: 15\nВыполненные задачи: разобрала заказы\n"
+                        "Тип(выходной/будний): будний")
         self.assertEqual(got.get(7), "2500")
         self.assertEqual(got.get(14), "")
 
-    def test_soprovozhdenie_vyhodnoy_firmy_2tel(self):
-        got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: выходной\nФирмы: да\nЗаказы выходные: 2")
+    def test_soprovozhdenie_novyy_shablon_vyhodnoy(self):
+        got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\n"
+                        "Дата: 15\nВыполненные задачи: приняла заказы\n"
+                        "Тип(выходной/будний): выходной")
         self.assertEqual(got.get(7), "")
-        self.assertEqual(got.get(14), "2800")  # 1000 фирмы (вых) + 1800 заказы
+        self.assertEqual(got.get(14), "3600")
 
-    def test_soprovozhdenie_vyhodnoy_rest_1tel(self):
-        got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: выходной\nФирмы: нет\nЗаказы выходные: 1")
-        self.assertEqual(got.get(14), "1800")
+    def test_soprovozhdenie_vyhodnoy_starye_polya_ne_dobavlyayut(self):
+        # Пришлют старый шаблон — выходной всё равно одна ставка 3600:
+        # надбавок за фирмы (+1000) и «заказы выходные» (+1800) больше нет.
+        got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\n"
+                        "Тип: выходной\nФирмы: да\nЗаказы выходные: 2")
+        self.assertEqual(got.get(7), "")
+        self.assertEqual(got.get(14), "3600")
 
-    def test_soprovozhdenie_vyhodnoy_rest_2tel(self):
-        # ★Анна 05.09.2026: надбавка за второй телефон убрана — 1800 при любом их числе
-        got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: выходной\nФирмы: нет\nЗаказы выходные: 2")
-        self.assertEqual(got.get(14), "1800")
-
-    def test_soprovozhdenie_budniy_dop_tel(self):
-        got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\nТип: будний\nФирмы: нет\nЗаказы будние: да")
+    def test_soprovozhdenie_budniy_starye_polya_ne_dobavlyayut(self):
+        # «Заказы будние» (доп. телефон) давали +1800 — отменено вместе с пунктом
+        got = self._run("Смена Менеджер сопровождение\nСотрудник: Алена Черкашина\nДата: 15\n"
+                        "Тип: будний\nФирмы: да\nЗаказы будние: да")
         self.assertEqual(got.get(7), "2500")
-        self.assertEqual(got.get(14), "1800")
+        self.assertEqual(got.get(14), "")
 
     def test_rop_auto_shift(self):
         sc = self._client()
