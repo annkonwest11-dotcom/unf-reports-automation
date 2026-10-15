@@ -23,10 +23,10 @@ from collections import defaultdict
 
 import gspread
 
-sys.path.insert(0, "/Users/anna/claude-test")
+sys.path.insert(0, "/Users/anna/GREENCH/01-деньги/зарплата")
 try:
     from dotenv import load_dotenv
-    load_dotenv("/Users/anna/claude-test/.env")
+    load_dotenv("/Users/anna/GREENCH/01-деньги/зарплата/.env")
 except Exception:
     pass
 

@@ -24,7 +24,7 @@
 🚀 ЧТО ДЕЛАТЬ СЕЙЧАС (5 МИНУТ):
 
 1️⃣ Открой инструкцию:
-   /Users/anna/claude-test/GITHUB_ACTIONS_SETUP.md
+   /Users/anna/GREENCH/01-деньги/зарплата/GITHUB_ACTIONS_SETUP.md
 
 2️⃣ Следуй шагам по порядку:
    • Создай GitHub аккаунт (если нет)
@@ -76,19 +76,19 @@
 
 Основные файлы проекта:
 
-1. /Users/anna/claude-test/.github/workflows/daily_reports.yml
+1. /Users/anna/GREENCH/01-деньги/зарплата/.github/workflows/daily_reports.yml
    └─ GitHub Actions workflow
 
-2. /Users/anna/claude-test/scripts/generate_reports.py
+2. /Users/anna/GREENCH/01-деньги/зарплата/scripts/generate_reports.py
    └─ Python скрипт отчетов
 
-3. /Users/anna/claude-test/GITHUB_ACTIONS_SETUP.md
+3. /Users/anna/GREENCH/01-деньги/зарплата/GITHUB_ACTIONS_SETUP.md
    └─ Инструкция (ЧИТАЙ ЭТО!)
 
-4. /Users/anna/claude-test/credentials.json
+4. /Users/anna/GREENCH/01-деньги/зарплата/credentials.json
    └─ Google авторизация (нужна для Secrets)
 
-5. /Users/anna/claude-test/FINAL_SUMMARY.txt
+5. /Users/anna/GREENCH/01-деньги/зарплата/FINAL_SUMMARY.txt
    └─ Общее резюме проекта
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -96,7 +96,7 @@
 🎉 СИСТЕМА ПОЛНОСТЬЮ ГОТОВА К БОЕВЫМ УСЛОВИЯМ!
 
 Открой инструкцию и начинай:
-/Users/anna/claude-test/GITHUB_ACTIONS_SETUP.md
+/Users/anna/GREENCH/01-деньги/зарплата/GITHUB_ACTIONS_SETUP.md
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

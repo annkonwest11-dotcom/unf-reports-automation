@@ -18,7 +18,7 @@ if [ "$CHOICE" = "1" ]; then
     echo ""
     echo "⚙️  Запускаю скрипт Selenium..."
     
-    source /Users/anna/claude-test/venv/bin/activate
+    source /Users/anna/GREENCH/01-деньги/зарплата/venv/bin/activate
     python3 << 'PYPYTHON'
 import subprocess
 import os
@@ -27,7 +27,7 @@ os.environ['1C_LOGIN'] = 'api_bot'
 os.environ['1C_PASSWORD'] = os.environ.get('1C_PASSWORD', '')
 
 # Запускаем скрипт
-result = subprocess.run(['python3', '/Users/anna/claude-test/install_extension.py'], 
+result = subprocess.run(['python3', '/Users/anna/GREENCH/01-деньги/зарплата/install_extension.py'], 
                        env=os.environ)
 sys.exit(result.returncode)
 PYPYTHON
@@ -36,7 +36,7 @@ elif [ "$CHOICE" = "2" ]; then
     echo ""
     echo "🔍 Пытаюсь загрузить через REST API 42clouds..."
     
-    source /Users/anna/claude-test/venv/bin/activate
+    source /Users/anna/GREENCH/01-деньги/зарплата/venv/bin/activate
     python3 << 'PYPYTHON'
 import requests
 import json

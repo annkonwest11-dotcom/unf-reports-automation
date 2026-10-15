@@ -5,7 +5,7 @@ import time
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 creds = Credentials.from_service_account_file(
-    '/Users/anna/claude-test/credentials.json',
+    '/Users/anna/GREENCH/01-деньги/зарплата/credentials.json',
     scopes=SCOPES
 )
 client = gspread.authorize(creds)

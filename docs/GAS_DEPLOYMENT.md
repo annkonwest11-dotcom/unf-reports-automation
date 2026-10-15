@@ -11,7 +11,7 @@
 В Google Apps Script проекте:
 
 1. **Создай файл `config.gs`**
-   - Скопируй содержимое `gas_config.gs` из `/Users/anna/claude-test/docs/`
+   - Скопируй содержимое `gas_config.gs` из `/Users/anna/GREENCH/01-деньги/зарплата/docs/`
    - Вставь в Google Apps Script
 
 2. **Создай файл `web_app.gs`** (или переименуй `Code.gs`)

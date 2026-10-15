@@ -15,7 +15,7 @@ https://script.google.com/macros/d/Abc123XYZ/usercurrentUserOnly
 
 ### 2. Открыть файл расширения
 
-Открой файл `/Users/anna/claude-test/docs/UNF_EXTENSION.bsl`
+Открой файл `/Users/anna/GREENCH/01-деньги/зарплата/docs/UNF_EXTENSION.bsl`
 
 Найди строку с ГАС_URL и замени:
 ```javascript

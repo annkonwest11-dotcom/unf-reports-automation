@@ -17,8 +17,8 @@ import sys
 import tempfile
 from collections import defaultdict
 
-sys.path.insert(0, "/Users/anna/claude-test")
-os.chdir("/Users/anna/claude-test")
+sys.path.insert(0, "/Users/anna/GREENCH/01-деньги/зарплата")
+os.chdir("/Users/anna/GREENCH/01-деньги/зарплата")
 
 from sync_debitorka import fetch_base            # noqa: E402
 
@@ -31,7 +31,7 @@ from debt_payments import by_name, бренд           # noqa: E402
 ИМЕНА = {"gubarev": "ИП Губарев И. С.",
          "perfilev": "ИП Перфильев В. К.",
          "volodihina": "ИП Володихина В. В."}
-ШАБЛОН = "/Users/anna/claude-test/templates/debt_board.html"
+ШАБЛОН = "/Users/anna/GREENCH/01-деньги/зарплата/templates/debt_board.html"
 
 СРЕЗ = (datetime.date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1
         else datetime.date.today())

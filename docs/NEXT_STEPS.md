@@ -83,7 +83,7 @@
 
 ## 📖 ДОКУМЕНТЫ
 
-Созданные документы в `/Users/anna/claude-test/docs/`:
+Созданные документы в `/Users/anna/GREENCH/01-деньги/зарплата/docs/`:
 
 1. **TZ_Telegram_bot_UNF_reports.md** — исходное ТЗ
 2. **ANALYSIS_CURRENT_STATE.md** — анализ текущего состояния

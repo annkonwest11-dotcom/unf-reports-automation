@@ -8,7 +8,7 @@
 
 1. Запусти эту команду:
 
-   bash /Users/anna/claude-test/deploy_cloud_scheduler.sh
+   bash /Users/anna/GREENCH/01-деньги/зарплата/deploy_cloud_scheduler.sh
 
 2. Авторизуйся когда будет предложено
 
@@ -22,7 +22,7 @@
    https://cloud.google.com/sdk/docs/install
 
 2. Потом запусти:
-   bash /Users/anna/claude-test/deploy_cloud_scheduler.sh
+   bash /Users/anna/GREENCH/01-деньги/зарплата/deploy_cloud_scheduler.sh
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

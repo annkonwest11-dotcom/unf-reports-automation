@@ -25,7 +25,7 @@ LOGIN = "api_bot"
 PASSWORD = "slavaperfilev1414"
 
 # Путь к расширению
-EXTENSION_FILE = "/Users/anna/claude-test/1C_UNF_EXTENSION_READY.bsl"
+EXTENSION_FILE = "/Users/anna/GREENCH/01-деньги/зарплата/1C_UNF_EXTENSION_READY.bsl"
 
 # Базы
 BASES = {
@@ -179,7 +179,7 @@ try:
     print("   ✅ Объединение данных двух баз")
     print("   ✅ Полное логирование в Google Sheets")
     print()
-    print("📚 Справка: /Users/anna/claude-test/INSTALL_1C_EXTENSION.md")
+    print("📚 Справка: /Users/anna/GREENCH/01-деньги/зарплата/INSTALL_1C_EXTENSION.md")
 
 except Exception as e:
     print(f"\n❌ ОШИБКА: {e}")

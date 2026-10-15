@@ -14,8 +14,8 @@ echo "✅ clasp установлен"
 echo ""
 
 # Директории
-WORK_DIR="/Users/anna/claude-test/.gas_final_deploy"
-DOCS_DIR="/Users/anna/claude-test/docs"
+WORK_DIR="/Users/anna/GREENCH/01-деньги/зарплата/.gas_final_deploy"
+DOCS_DIR="/Users/anna/GREENCH/01-деньги/зарплата/docs"
 mkdir -p "$WORK_DIR"
 
 cd "$WORK_DIR"
@@ -98,13 +98,13 @@ echo "════════════════════════�
 echo ""
 
 # Сохраняем URL
-echo "$URL" > /Users/anna/claude-test/DEPLOYMENT_URL.txt
-echo "✅ URL сохранен в: /Users/anna/claude-test/DEPLOYMENT_URL.txt"
+echo "$URL" > /Users/anna/GREENCH/01-деньги/зарплата/DEPLOYMENT_URL.txt
+echo "✅ URL сохранен в: /Users/anna/GREENCH/01-деньги/зарплата/DEPLOYMENT_URL.txt"
 echo ""
 
 # Создаем готовое расширение 1С
 echo "📦 Подготавливаю расширение 1С..."
-EXTENSION_FILE="/Users/anna/claude-test/1C_UNF_EXTENSION_FINAL.bsl"
+EXTENSION_FILE="/Users/anna/GREENCH/01-деньги/зарплата/1C_UNF_EXTENSION_FINAL.bsl"
 
 cp "$DOCS_DIR/UNF_EXTENSION.bsl" "$EXTENSION_FILE"
 

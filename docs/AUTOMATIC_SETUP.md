@@ -36,7 +36,7 @@ clasp login
 ### Шаг 2: Запустить скрипт установки
 
 ```bash
-cd /Users/anna/claude-test
+cd /Users/anna/GREENCH/01-деньги/зарплата
 bash run_full_setup.sh
 ```
 
@@ -93,7 +93,7 @@ https://script.google.com/macros/d/ABC123XYZ/usercurrentUserOnly
 https://script.google.com/macros/d/ABC123XYZ/usercurrentUserOnly
 
 📁 ФАЙЛЫ:
-  • Расширение 1С: /Users/anna/claude-test/UNF_EXTENSION_WITH_URL.bsl
+  • Расширение 1С: /Users/anna/GREENCH/01-деньги/зарплата/UNF_EXTENSION_WITH_URL.bsl
   • Google Sheets: https://...
 
 ═══════════════════════════════════════════════════════════
@@ -122,7 +122,7 @@ https://script.google.com/macros/d/ABC123XYZ/usercurrentUserOnly
 
 Файл расширения будет в:
 ```
-/Users/anna/claude-test/UNF_EXTENSION_WITH_URL.bsl
+/Users/anna/GREENCH/01-деньги/зарплата/UNF_EXTENSION_WITH_URL.bsl
 ```
 
 Для каждой базы (Перфильев и Губарев):
@@ -197,7 +197,7 @@ clasp login
 
 ```bash
 # Просто запусти это:
-bash /Users/anna/claude-test/run_full_setup.sh
+bash /Users/anna/GREENCH/01-деньги/зарплата/run_full_setup.sh
 ```
 
 **И всё произойдет автоматически!** 🚀

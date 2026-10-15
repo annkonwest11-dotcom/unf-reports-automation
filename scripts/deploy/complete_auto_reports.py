@@ -20,7 +20,7 @@ print("""
 """)
 
 # Данные
-CREDS_FILE = "/Users/anna/claude-test/credentials.json"
+CREDS_FILE = "/Users/anna/GREENCH/01-деньги/зарплата/credentials.json"
 SHEET_ID = "1KaxfaSWTDR31eAJfmpahaNwaO2Qohrh5xua1Rrjf2Zo"
 TELEGRAM_TOKEN = "8602166476:AAEo3ySMNmF38lyH0yppcW7CKejzXK_w7cY"
 TELEGRAM_CHAT_ID = "796207056"

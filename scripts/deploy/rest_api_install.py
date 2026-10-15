@@ -17,7 +17,7 @@ print("""
 
 LOGIN = "api_bot"
 PASSWORD = "slavaperfilev1414"
-EXTENSION_FILE = "/Users/anna/claude-test/1C_UNF_EXTENSION_READY.bsl"
+EXTENSION_FILE = "/Users/anna/GREENCH/01-деньги/зарплата/1C_UNF_EXTENSION_READY.bsl"
 
 BASES = {
     "Перфильев": {

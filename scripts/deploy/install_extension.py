@@ -34,7 +34,7 @@ if not password:
     sys.exit(1)
 
 # Путь к расширению
-extension_file = "/Users/anna/claude-test/1C_UNF_EXTENSION_READY.bsl"
+extension_file = "/Users/anna/GREENCH/01-деньги/зарплата/1C_UNF_EXTENSION_READY.bsl"
 if not os.path.exists(extension_file):
     print(f"❌ Файл расширения не найден: {extension_file}")
     sys.exit(1)
@@ -169,7 +169,7 @@ try:
     print("\n🎉 Теперь создай регламентные задания в 1С:")
     print("   1. ОтправкаОтчетовУНФ - Ежедневно 09:30")
     print("   2. ОпросОчередиКомандУНФ - Каждую минуту")
-    print("\nСмотри инструкцию: /Users/anna/claude-test/INSTALL_1C_EXTENSION.md")
+    print("\nСмотри инструкцию: /Users/anna/GREENCH/01-деньги/зарплата/INSTALL_1C_EXTENSION.md")
 
 except Exception as e:
     print(f"\n❌ ОШИБКА: {e}")

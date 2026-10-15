@@ -11,7 +11,7 @@
 
 ## 📋 ФАЙЛЫ ДЛЯ ИСПОЛЬЗОВАНИЯ
 
-### Папка: `/Users/anna/claude-test/docs/`
+### Папка: `/Users/anna/GREENCH/01-деньги/зарплата/docs/`
 
 **ДЛЯ GOOGLE APPS SCRIPT:**
 1. ✅ `GAS_COMPLETE_CONFIG.gs` — конфигурация (скопируй-вставь в GAS)

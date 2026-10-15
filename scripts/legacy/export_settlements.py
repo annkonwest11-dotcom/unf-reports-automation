@@ -176,7 +176,7 @@ for cell in ws[total_row]:
     if cell.column > 1:
         cell.number_format = '#,##0.00'
 
-file_path = f"/Users/anna/claude-test/Взаиморасчёты_{START_DATE}_{END_DATE}.xlsx"
+file_path = f"/Users/anna/GREENCH/01-деньги/зарплата/Взаиморасчёты_{START_DATE}_{END_DATE}.xlsx"
 wb.save(file_path)
 
 print(f"\n✅ Файл создан: {file_path}")

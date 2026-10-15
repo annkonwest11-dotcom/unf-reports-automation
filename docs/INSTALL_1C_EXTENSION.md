@@ -1,6 +1,6 @@
 # 📦 ЗАГРУЗКА РАСШИРЕНИЯ В 1С
 
-Расширение готово: `/Users/anna/claude-test/1C_UNF_EXTENSION_READY.bsl`
+Расширение готово: `/Users/anna/GREENCH/01-деньги/зарплата/1C_UNF_EXTENSION_READY.bsl`
 
 ---
 
@@ -84,7 +84,7 @@
 
 ## 📁 ФАЙЛЫ
 
-- **Расширение 1С:** `/Users/anna/claude-test/1C_UNF_EXTENSION_READY.bsl`
+- **Расширение 1С:** `/Users/anna/GREENCH/01-деньги/зарплата/1C_UNF_EXTENSION_READY.bsl`
 - **Google Sheets:** https://docs.google.com/spreadsheets/d/1KaxfaSWTDR31eAJfmpahaNwaO2Qohrh5xua1Rrjf2Zo/edit
 - **GAS Web App:** https://script.google.com/macros/d/1v0wRnUkCW020iG7FUM8ifjuXah8ZzMEXFpoZIXnGQHD0ctAnQKCBgfXe/usercurrentUserOnly
 

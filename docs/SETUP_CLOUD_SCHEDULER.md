@@ -70,7 +70,7 @@ def unf_reports_scheduler(request):
         # Запускаем скрипт отчетов
         result = subprocess.run([
             'python3',
-            '/Users/anna/claude-test/complete_auto_reports.py'
+            '/Users/anna/GREENCH/01-деньги/зарплата/complete_auto_reports.py'
         ], capture_output=True, text=True, timeout=300)
         
         return {

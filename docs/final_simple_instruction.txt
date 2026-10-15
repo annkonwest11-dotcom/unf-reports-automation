@@ -4,7 +4,7 @@
 ╚════════════════════════════════════════════════════════════╝
 
 📁 ФАЙЛ РАСШИРЕНИЯ (скопируй путь):
-/Users/anna/claude-test/1C_UNF_EXTENSION_READY.bsl
+/Users/anna/GREENCH/01-деньги/зарплата/1C_UNF_EXTENSION_READY.bsl
 
 ═══════════════════════════════════════════════════════════
 
@@ -22,7 +22,7 @@
 5. Нажми кнопку: Загрузить расширение
 
 6. В диалоге выбери файл:
-   /Users/anna/claude-test/1C_UNF_EXTENSION_READY.bsl
+   /Users/anna/GREENCH/01-деньги/зарплата/1C_UNF_EXTENSION_READY.bsl
 
 7. Нажми: Установить
 

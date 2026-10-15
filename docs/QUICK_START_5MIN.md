@@ -22,7 +22,7 @@
 
 ### 2.2. Скопируй из файла `GAS_COMPLETE_CONFIG.gs`
 
-Открой файл `/Users/anna/claude-test/docs/GAS_COMPLETE_CONFIG.gs`
+Открой файл `/Users/anna/GREENCH/01-деньги/зарплата/docs/GAS_COMPLETE_CONFIG.gs`
 Скопируй **ВСЕ содержимое**
 Вставь в Google Apps Script
 
@@ -34,7 +34,7 @@
 Выбери **Script**
 Назови `Code.gs`
 
-Открой файл `/Users/anna/claude-test/docs/GAS_COMPLETE_MAIN.gs`
+Открой файл `/Users/anna/GREENCH/01-деньги/зарплата/docs/GAS_COMPLETE_MAIN.gs`
 Скопируй **ВСЕ содержимое**
 Вставь в новый файл `Code.gs`
 

@@ -30,7 +30,7 @@ if not TOKEN:
 
 USERNAME = "annkonwest11-dotcom"
 REPO_NAME = "unf-reports-automation"
-PROJECT_DIR = "/Users/anna/claude-test"
+PROJECT_DIR = "/Users/anna/GREENCH/01-деньги/зарплата"
 
 print(f"\n✅ Токен получен")
 print(f"Будут загружены файлы на: https://github.com/{USERNAME}/{REPO_NAME}")

@@ -26,7 +26,7 @@ BASE_1C_URL = "https://base.42clouds.com"
 
 # Google Sheets
 SHEET_ID = "1KaxfaSWTDR31eAJfmpahaNwaO2Qohrh5xua1Rrjf2Zo"
-CREDS_FILE = "/Users/anna/claude-test/credentials.json"
+CREDS_FILE = "/Users/anna/GREENCH/01-деньги/зарплата/credentials.json"
 
 print("\n1️⃣  ПОДКЛЮЧАЮСЬ К REST API 1С...\n")
 

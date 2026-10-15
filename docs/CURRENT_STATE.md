@@ -193,7 +193,7 @@ claude-test/
 
 ### Google Sheets
 ```
-Основная таблица: /Users/anna/claude-test/.env → SPREADSHEET_ID
+Основная таблица: /Users/anna/GREENCH/01-деньги/зарплата/.env → SPREADSHEET_ID
 Листы:
   - СМЕНЫ (основные данные)
   - СВОДНАЯ_ЗП (расчёты)

@@ -17,8 +17,8 @@ import subprocess
 import sys
 from collections import defaultdict
 
-sys.path.insert(0, "/Users/anna/claude-test")
-os.chdir("/Users/anna/claude-test")
+sys.path.insert(0, "/Users/anna/GREENCH/01-деньги/зарплата")
+os.chdir("/Users/anna/GREENCH/01-деньги/зарплата")
 
 from sync_debitorka import fetch_base            # noqa: E402
 from sync_odata import BASES                      # noqa: E402

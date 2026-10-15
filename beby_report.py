@@ -27,7 +27,7 @@ from datetime import date, datetime, timedelta
 
 import gspread
 
-sys.path.insert(0, "/Users/anna/claude-test")
+sys.path.insert(0, "/Users/anna/GREENCH/01-деньги/зарплата")
 import beby_invoice
 from sync_odata import BASES, _fetch_odata
 from sync_rhythm import CREDENTIALS_PATH

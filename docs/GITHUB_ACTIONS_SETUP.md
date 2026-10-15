@@ -125,7 +125,7 @@ git push origin main
   **Как получить:**
   
   ```bash
-  cat /Users/anna/claude-test/credentials.json
+  cat /Users/anna/GREENCH/01-деньги/зарплата/credentials.json
   ```
   
   Скопируй весь текст (весь JSON) и вставь как значение
