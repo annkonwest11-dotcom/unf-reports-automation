@@ -12,7 +12,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from sync_odata import norm_name, SKIP_CONTRACTORS, _open_spreadsheet, DATA_START_ROW
+from sync_odata import (norm_name, SKIP_CONTRACTORS, _open_spreadsheet,
+                        DATA_START_ROW, SHEET_BASES)
 from sync_novye import sync_novye
 
 ss = _open_spreadsheet()
@@ -30,7 +31,7 @@ print("=" * 60)
 print("ЛИСТЫ ДАННЫЕ → контрагенты, которых НЕТ в СПРАВОЧНИКЕ")
 print("=" * 60)
 total_missing = {}
-for sh in ("ДАННЫЕ_Губарев", "ДАННЫЕ_Перфильев"):
+for sh in [c["sheet_name"] for c in SHEET_BASES.values()]:
     ws = ss.worksheet(sh)
     names = [v for v in ws.col_values(1)[DATA_START_ROW - 1:] if v and v.strip()]
     missing = []

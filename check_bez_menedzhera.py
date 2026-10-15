@@ -14,7 +14,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from sync_odata import _open_spreadsheet, DATA_START_ROW
+from sync_odata import _open_spreadsheet, DATA_START_ROW, SHEET_BASES
 
 
 def _num(x):
@@ -32,7 +32,7 @@ def main():
     ss = _open_spreadsheet()
     grand = 0.0
     grand_rows = 0
-    for sh in ("ДАННЫЕ_Губарев", "ДАННЫЕ_Перфильев"):
+    for sh in [c["sheet_name"] for c in SHEET_BASES.values()]:
         rows = ss.worksheet(sh).get("A1:L600")
         with_money, without_money = [], 0
         for i, r in enumerate(rows[DATA_START_ROW - 1:], start=DATA_START_ROW):

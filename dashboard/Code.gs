@@ -136,7 +136,9 @@ function syncNewClientsFromKPI() {
       var vlookupH = '=IFERROR(VLOOKUP(B' + hRow +
         ';ДАННЫЕ_Губарев!$A$4:$L$503;12;0);0)' +
         '+IFERROR(VLOOKUP(B' + hRow +
-        ';ДАННЫЕ_Перфильев!$A$4:$L$503;12;0);0)';
+        ';ДАННЫЕ_Перфильев!$A$4:$L$503;12;0);0)' +
+        '+IFERROR(VLOOKUP(B' + hRow +
+        ';ДАННЫЕ_Володихина!$A$4:$L$503;12;0);0)';
 
       newRows.push([
         today,                    // A: дата синка

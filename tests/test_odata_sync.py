@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sync_odata import (
     DATA_START_ROW,
     aggregate_balances,
+    name_tokens,
     norm_name,
     plan_updates,
     _current_month_period,
@@ -169,6 +170,31 @@ class TestSoftMatch(unittest.TestCase):
         up, new = self._row("Елена физ лицо Северяне нал", "Онегин физ лицо нал")
         self.assertEqual(up, [])
         self.assertEqual(len(new), 1)
+
+    def test_transfer_mark_to_third_ip(self):
+        """Перевод на третье ИП пишут без даты: «… НА ИП ВОЛОДИХИНА»."""
+        up, new = self._row("SAVVA (ООО БРАНЧ) ЭДО",
+                            "SAVVA (ООО БРАНЧ) НА ИП ВОЛОДИХИНА")
+        self.assertEqual(up, [(DATA_START_ROW, [1, 2, 3, 4])])
+        self.assertEqual(new, [])
+
+    def test_transfer_mark_truncated_or_misspelled(self):
+        """09.10.2026: пометку пишут и обрезанной, и с опечаткой — карточка та же.
+
+        «НА ВОЛОДИХ» и «НА ВОЛОДИХИША» раньше не срезались, и обе выглядели
+        новыми клиентами: оплаты не попадали в строку листа.
+        """
+        for odata_name in ("ЦИНДАО (ООО КОМЬЮНИТИ ПАБ) НА ВОЛОДИХ",
+                           "ЦИНДАО (ООО КОМЬЮНИТИ ПАБ) ЭДО НА ВОЛОДИХИША"):
+            with self.subTest(odata_name=odata_name):
+                up, new = self._row("ЦИНДАО (ООО КОМЬЮНИТИ ПАБ) ЭДО", odata_name)
+                self.assertEqual(up, [(DATA_START_ROW, [1, 2, 3, 4])])
+                self.assertEqual(new, [])
+
+    def test_honest_name_with_na_is_kept(self):
+        """«КОФЕЙНЯ НА ПАТРИКАХ» — не пометка о переводе, срезать нечего."""
+        self.assertIn("патриках",
+                      name_tokens("ООО КОФЕЙНЯ НА ПАТРИКАХ адрес доставки!"))
 
     def test_ambiguous_match_is_refused(self):
         """Два одинаково похожих кандидата — деньги никому не приписываем."""
