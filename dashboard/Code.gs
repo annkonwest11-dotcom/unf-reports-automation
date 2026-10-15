@@ -1,3 +1,9 @@
+/**
+ * ★15.10.2026: лист ДАШБОРД_ДАННЫЕ УДАЛЁН из таблицы (решение Анны: «пусть будет
+ * только дашборд РОПа»), поэтому веб-отчёт doGet/getDashboardData больше не работает.
+ * Живой здесь только syncNewClientsFromKPI — ночной триггер 03:00, пишет лист
+ * НОВЫЕ_КЛИЕНТЫ из KPI-таблицы; его не трогаем.
+ */
 var MAIN_SS_ID = '1KaxfaSWTDR31eAJfmpahaNwaO2Qohrh5xua1Rrjf2Zo';
 var KPI_SS_ID  = '1QuvmjSPJUbqGTbGKKBcDu8QdQaFv1Gg2VbzUb-bEbL4';
 
