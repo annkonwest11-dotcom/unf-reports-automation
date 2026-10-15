@@ -90,7 +90,29 @@ SALES = [
 ]
 
 
+# ★12.10.2026: Анна попросила колонку «База 1С» третьей — менеджеры съехали с F на G
+SALES_WITH_BASE = [
+    ["Ресторан", "Юр лицо", "База 1С", "Создан", "Классифицкация", "до какого числа",
+     "Дарья", "Алена", "Ксения", "Лилия", "София", "Виолетта", "Анна", "ИТОГ"],
+    ["ЛЕСНОЙ", "", "Губарев", "первый заказ 06.09", "новый", "по 04.10",
+     "30\xa0250,00", "", "", "", "", "", "", ""],
+    ["ЗЭТТА", "", "Володихина", "первый заказ 07.09", "новый", "по 05.10",
+     "", "", "-", "", "", "1\xa0000,00", "", ""],
+    ["", "", "", "итоги ниже — колонка A пустая", "", "", "999999", "", "", "", "", "", "", ""],
+]
+
+
 class TestManagerSales(unittest.TestCase):
+    def test_base_column_does_not_become_a_manager(self):
+        """Колонки «База 1С» и «до какого числа» менеджерами не считаются."""
+        book = FakeSpreadsheet([FakeWorksheet(SALES_WITH_BASE, "август-сентябрь")])
+        totals, meta, clients = rb.manager_sales(book, datetime(2026, 9, 28))
+        self.assertEqual(set(totals), {"Дарья", "Алена", "Ксения", "Лилия", "София",
+                                       "Виолетта", "Анна"})
+        self.assertEqual(totals["Дарья"], 30250)
+        self.assertEqual(totals["Виолетта"], 1000)
+        self.assertEqual(meta["rows"], 2)
+
     def test_sums_by_manager_column(self):
         book = FakeSpreadsheet([FakeWorksheet(SALES, "август-сентябрь")])
         totals, meta, clients = rb.manager_sales(book, datetime(2026, 9, 28))

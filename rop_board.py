@@ -396,6 +396,11 @@ def pick_sales_sheet(spreadsheet, today):
     return sheets[-1], False
 
 
+# Заголовки листа продаж, которые менеджерами не являются
+_SERVICE_HEAD = re.compile(r"ресторан|юр|база|создан|классиф|какого\s*числа|\+\s*30|итог",
+                           re.I)
+
+
 def manager_sales(spreadsheet, today):
     """{имя: сумма новых продаж} с листа текущего периода + служебная информация.
 
@@ -408,8 +413,10 @@ def manager_sales(spreadsheet, today):
     if not values:
         return {}, {"sheet": ws.title, "exact": exact, "rows": 0, "url": ""}
     header = values[0]
-    cols = {i: header[i].strip() for i in range(5, min(len(header), 14))
-            if header[i].strip() and header[i].strip().upper() != "ИТОГ"}
+    # ★12.10.2026: в листе появилась колонка «База 1С» (третья), и менеджеры съехали
+    # с F на G. Поэтому не номера колонок, а шапка: служебные заголовки отбрасываем.
+    cols = {i: header[i].strip() for i in range(len(header))
+            if header[i].strip() and not _SERVICE_HEAD.search(header[i])}
     totals = {name: 0.0 for name in cols.values()}
     clients = defaultdict(list)
     rows = 0
