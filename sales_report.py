@@ -1702,7 +1702,9 @@ def run(ym=None, live=False, dry_run=False, pending=True, today=None, ask=True):
     rows += apply_beby(blank_orphans(blanks, hist, ym), beby)
     ask_state = sales_ask.load_state()
     # ответы принимаем только по тем клиентам, про которых сами спрашивали
-    answers = sales_ask.read_answers(ask_state) if ask else {}
+    # прочитанные ответы складываем в состояние: в чате они уезжают из окна чтения
+    answers = sales_ask.remember_answers(
+        ask_state, sales_ask.read_answers(ask_state) if ask else {})
     excluded = load_excluded(ss)
     rows, refused = apply_answers(rows, answers)
     # ★15.10.2026: сирот ищем среди ВСЕХ строк расчёта, включая только что
@@ -1747,7 +1749,7 @@ def run(ym=None, live=False, dry_run=False, pending=True, today=None, ask=True):
                                     kind=sales_ask.ASK_WHO,
                                     managers=list(sheet["managers"].values()),
                                     rows_in_sheet=места)
-        if asked and not dry_run:
+        if (asked or answers) and not dry_run:
             sales_ask.save_state(state)
     return dict(ym=ym, sheet=ws.title, rows=rows, plan=plan, written=written, asked=asked,
                 answers=answers, refused=refused,

@@ -191,6 +191,28 @@ class TestApplyAnswers(unittest.TestCase):
         w.assert_not_called()
 
 
+class TestRememberAnswers(unittest.TestCase):
+    """★15.10.2026: нажатие не должно пропасть, уехав из окна чтения истории."""
+
+    def test_old_answer_survives_when_chat_window_moved(self):
+        state = {"asked": {}, "answers": {"СИКСТИ (ООО ЛЕО)": "не вносить"}}
+        out = sa.remember_answers(state, {"SAVVA (ООО БРАНЧ) ЭДО": "вносить"})
+        self.assertEqual(out, {"СИКСТИ (ООО ЛЕО)": "не вносить",
+                               "SAVVA (ООО БРАНЧ) ЭДО": "вносить"})
+        self.assertEqual(state["answers"], out)
+
+    def test_new_answer_overrides_old_one(self):
+        """Анна может передумать и нажать снова — верен последний ответ."""
+        state = {"asked": {}, "answers": {"SAVVA (ООО БРАНЧ) ЭДО": "не вносить"}}
+        out = sa.remember_answers(state, {"SAVVA (ООО БРАНЧ) ЭДО": "вносить"})
+        self.assertEqual(out["SAVVA (ООО БРАНЧ) ЭДО"], "вносить")
+
+    def test_empty_read_keeps_everything(self):
+        state = {"asked": {}, "answers": {"ДЖЕМ (ООО ДЖЕМ)": "не вносить"}}
+        self.assertEqual(sa.remember_answers(state, {}),
+                         {"ДЖЕМ (ООО ДЖЕМ)": "не вносить"})
+
+
 class TestOrphanRefusals(unittest.TestCase):
     """«Не вношу» про того, кого в расчёте нет (★ДЖЕМ, 13.10.2026)."""
 
