@@ -1,0 +1,457 @@
+<title>Дебиторка GREENCH</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    color-scheme: light;
+    --ground: #f6f7f3;
+    --surface: #ffffff;
+    --surface-2: #eef1ea;
+    --line: #dfe4d9;
+    --ink: #1a1f17;
+    --ink-2: #5c6657;
+    --ink-3: #8b947f;
+    --green: #2f6b36;
+    --green-soft: #e4efe2;
+    --crit: #a8301f;
+    --crit-soft: #fae7e3;
+    --warn: #9a6400;
+    --warn-soft: #fbefd9;
+    --calm: #46617a;
+    --shadow: 0 1px 2px rgba(26,31,23,.06), 0 8px 24px -16px rgba(26,31,23,.25);
+    --display: "Bricolage Grotesque", Georgia, serif;
+    --body: "Public Sans", -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ground: #13170f;
+      --surface: #1b2017;
+      --surface-2: #232a1e;
+      --line: #333c2b;
+      --ink: #eef1e8;
+      --ink-2: #aab3a0;
+      --ink-3: #7c866f;
+      --green: #8dc38f;
+      --green-soft: #26331f;
+      --crit: #ef8878;
+      --crit-soft: #3a2019;
+      --warn: #e0ad53;
+      --warn-soft: #362a14;
+      --calm: #9fbdd6;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 28px -18px rgba(0,0,0,.8);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ground: #13170f;
+    --surface: #1b2017;
+    --surface-2: #232a1e;
+    --line: #333c2b;
+    --ink: #eef1e8;
+    --ink-2: #aab3a0;
+    --ink-3: #7c866f;
+    --green: #8dc38f;
+    --green-soft: #26331f;
+    --crit: #ef8878;
+    --crit-soft: #3a2019;
+    --warn: #e0ad53;
+    --warn-soft: #362a14;
+    --calm: #9fbdd6;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 28px -18px rgba(0,0,0,.8);
+  }
+
+  body { background: var(--ground); color: var(--ink); font-family: var(--body);
+         font-size: 15px; line-height: 1.45; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding-inline: 18px; padding-block: 22px 56px; }
+
+  header.top { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 22px;
+               border-bottom: 2px solid var(--green); padding-bottom: 14px; }
+  .brand { font-family: var(--display); font-weight: 700; font-size: 27px; letter-spacing: -.02em;
+           color: var(--green); line-height: 1.05; }
+  .brand span { display: block; font-family: var(--body); font-weight: 500; font-size: 13px;
+                color: var(--ink-2); letter-spacing: .01em; margin-top: 3px; }
+  .asof { margin-left: auto; text-align: right; font-size: 13px; color: var(--ink-2); }
+  .asof b { display: block; font-family: var(--mono); font-size: 17px; color: var(--ink);
+            font-weight: 600; }
+
+  .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 20px; }
+  .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+         padding: 13px 15px 14px; box-shadow: var(--shadow); }
+  .kpi .k { font-size: 11.5px; text-transform: uppercase; letter-spacing: .07em;
+            color: var(--ink-3); font-weight: 600; }
+  .kpi .v { font-family: var(--mono); font-weight: 600; font-size: 25px; letter-spacing: -.02em;
+            margin-top: 5px; font-variant-numeric: tabular-nums; }
+  .kpi .v small { font-size: 15px; font-weight: 500; color: var(--ink-2); margin-left: 2px; }
+  .kpi.alarm { border-color: color-mix(in srgb, var(--crit) 35%, var(--line)); }
+  .kpi.alarm .v { color: var(--crit); }
+  .kpi .sub { font-size: 12px; color: var(--ink-2); margin-top: 3px; }
+
+  h2 { font-family: var(--display); font-weight: 600; font-size: 19px; letter-spacing: -.01em;
+       margin: 30px 0 12px; text-wrap: balance; }
+  h2 .hint { font-family: var(--body); font-weight: 400; font-size: 13px; color: var(--ink-3);
+             margin-left: 8px; }
+
+  /* ── разрез по ИП ── */
+  .ips { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .ip { background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+        padding: 14px 16px 15px; box-shadow: var(--shadow); }
+  .ip h3 { font-family: var(--display); font-size: 16px; font-weight: 600; margin: 0 0 2px; }
+  .ip .cnt { font-size: 12.5px; color: var(--ink-2); }
+  .ip dl { display: grid; grid-template-columns: auto auto; gap: 3px 10px; margin: 11px 0 0;
+           font-size: 13px; }
+  .ip dt { color: var(--ink-2); }
+  .ip dd { margin: 0; text-align: right; font-family: var(--mono); font-weight: 600;
+           font-variant-numeric: tabular-nums; }
+  .ip dd.red { color: var(--crit); }
+  .bar { display: flex; height: 7px; border-radius: 4px; overflow: hidden; margin-top: 11px;
+         background: var(--surface-2); }
+  .bar i { display: block; height: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 9px; font-size: 11.5px;
+            color: var(--ink-2); }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+              margin-right: 4px; vertical-align: -1px; }
+
+  /* ── таблица ── */
+  .tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 11px; }
+  .seg { display: flex; background: var(--surface-2); border-radius: 8px; padding: 3px; gap: 2px; }
+  .seg button { font: inherit; font-size: 13px; border: 0; background: transparent; color: var(--ink-2);
+                padding: 6px 11px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  .seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); font-weight: 600;
+                                     box-shadow: var(--shadow); }
+  input[type="search"] { font: inherit; font-size: 14px; padding: 8px 11px; border-radius: 8px;
+                         border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+                         min-width: 190px; flex: 1 1 190px; }
+  .chk { display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; color: var(--ink-2);
+         cursor: pointer; padding: 6px 4px; }
+  .count { font-size: 13px; color: var(--ink-3); margin-left: auto; font-variant-numeric: tabular-nums; }
+
+  .tablebox { background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+              box-shadow: var(--shadow); overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  thead th { position: sticky; top: env(safe-area-inset-top, 0px); background: var(--surface-2);
+             color: var(--ink-2); text-align: left; font-size: 11px; text-transform: uppercase;
+             letter-spacing: .06em; font-weight: 600; padding: 9px 12px; white-space: nowrap;
+             border-bottom: 1px solid var(--line); cursor: pointer; user-select: none; }
+  thead th.num { text-align: right; }
+  thead th[aria-sort] { color: var(--ink); }
+  thead th .arr { opacity: .45; font-size: 10px; }
+  td { padding: 7px 12px; border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); }
+  td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums;
+           white-space: nowrap; }
+  td.name { min-width: 230px; }
+  tbody tr:last-child td { border-bottom: 0; }
+  .ipchip { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 20px;
+            background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
+  .over { color: var(--crit); font-weight: 600; }
+  .zero { color: var(--ink-3); }
+  .days { display: inline-block; min-width: 46px; text-align: right; }
+  .days.hot { color: var(--crit); font-weight: 600; }
+  .days.old { color: var(--warn); font-weight: 600; }
+  tr.critical td.name::before { content: ""; display: inline-block; width: 4px; height: 13px;
+       background: var(--crit); border-radius: 2px; margin-right: 8px; vertical-align: -2px; }
+  .empty { padding: 26px 14px; text-align: center; color: var(--ink-3); }
+  .also { display: block; font-size: 11.5px; color: var(--calm); margin-top: 2px; }
+  .flag { display: block; font-size: 11.5px; color: var(--warn); margin-top: 2px; font-weight: 600; }
+  .card2 { display: block; font-size: 11.5px; color: var(--calm); margin-top: 2px; }
+  .paycell { color: var(--ink-2); }
+  .paycell b { color: var(--ink); font-weight: 600; }
+  .nopay { color: var(--crit); }
+  .kpi.money .v { color: var(--green); }
+  .kpi.hang .v { color: var(--warn); }
+  .note { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--calm);
+          border-radius: 8px; padding: 11px 14px; margin-top: 12px; font-size: 13.5px;
+          color: var(--ink-2); box-shadow: var(--shadow); }
+  .note b { color: var(--ink); font-weight: 600; }
+
+  footer { margin-top: 26px; font-size: 12.5px; color: var(--ink-3); line-height: 1.6;
+           border-top: 1px solid var(--line); padding-top: 12px; }
+
+  @media (max-width: 860px) {
+    .kpis { grid-template-columns: repeat(2, 1fr); }
+    .ips { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 430px) {
+    .kpi .v { font-size: 21px; }
+    .brand { font-size: 23px; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .seg button, thead th { transition: background-color .15s ease, color .15s ease; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">GREENCH<span>дебиторская задолженность · три ИП</span></div>
+    <div class="asof">срез на<b id="asof">—</b>источник: 1С, OData</div>
+  </header>
+
+  <div class="kpis">
+    <div class="kpi"><div class="k">Должников</div><div class="v" id="k-count">—</div>
+      <div class="sub" id="k-count-sub">—</div></div>
+    <div class="kpi"><div class="k">Общий долг</div><div class="v" id="k-total">—<small>₽</small></div>
+      <div class="sub">по всем трём ИП</div></div>
+    <div class="kpi alarm"><div class="k">Просрочено</div><div class="v" id="k-over">—<small>₽</small></div>
+      <div class="sub" id="k-over-sub">—</div></div>
+    <div class="kpi"><div class="k">Старше 60 дней</div><div class="v" id="k-old">—<small>₽</small></div>
+      <div class="sub" id="k-old-sub">—</div></div>
+    <div class="kpi money"><div class="k" id="k-paid-k">Оплачено</div>
+      <div class="v" id="k-paid">—<small>₽</small></div>
+      <div class="sub" id="k-paid-sub">—</div></div>
+    <div class="kpi hang"><div class="k">Деньги без разноски</div>
+      <div class="v" id="k-un">—<small>₽</small></div>
+      <div class="sub" id="k-un-sub">—</div></div>
+  </div>
+
+  <h2>Разрез по ИП</h2>
+  <div class="ips" id="ips"></div>
+  <div class="legend" id="legend"></div>
+  <div class="note" id="dual" hidden></div>
+
+  <h2>Должники<span class="hint">клик по заголовку — сортировка</span></h2>
+  <div class="tools">
+    <div class="seg" id="seg-ip" role="group" aria-label="Фильтр по ИП"></div>
+    <input type="search" id="q" placeholder="Поиск по названию или юрлицу" aria-label="Поиск должника">
+    <label class="chk"><input type="checkbox" id="only-over"> только просроченные</label>
+    <label class="chk"><input type="checkbox" id="merge"> свести клиента по всем ИП</label>
+    <label class="chk"><input type="checkbox" id="only-hang"> ⚑ есть деньги без разноски</label>
+    <span class="count" id="count">—</span>
+  </div>
+  <div class="tablebox">
+    <table>
+      <thead><tr>
+        <th data-sort="name">Контрагент <span class="arr">↕</span></th>
+        <th data-sort="ip">ИП <span class="arr">↕</span></th>
+        <th class="num" data-sort="total">Долг, ₽ <span class="arr">↕</span></th>
+        <th class="num" data-sort="overdue">Просрочено, ₽ <span class="arr">↕</span></th>
+        <th class="num" data-sort="days">Дней <span class="arr">↕</span></th>
+        <th class="num" data-sort="old">От 61 дн., ₽ <span class="arr">↕</span></th>
+        <th class="num" data-sort="pdays">Посл. оплата <span class="arr">↕</span></th>
+        <th class="num" data-sort="p30">Оплачено за 30 дн., ₽ <span class="arr">↕</span></th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty" hidden>Никого не нашлось — измените фильтр</div>
+  </div>
+
+  <footer>
+    Долг — расходные накладные с положительным остатком на дату среза. Просрочка считается только
+    по договорам с заданной отсрочкой платежа: у наличников и физлиц срок не задан, поэтому долг
+    у них есть, а просрочки нет. Красной полосой отмечены должники с просрочкой свыше 50 000 ₽.
+    <br>Оплаты — проведённые поступления от покупателей на счёт и в кассу. ⚑ значит, что деньги
+    клиента долг не гасят: они либо не разнесены по накладным, либо разнесены на накладную
+    с минусом. Такому клиенту звонить нельзя — сначала разнести оплату.
+    «Платит на карточку …» — деньги приходят на другую карточку того же клиента (обычно старое
+    юрлицо после перевода), а накладные этой карточки ими не гасятся.
+  </footer>
+</div>
+
+<script>
+  const ДАННЫЕ = /*__ДАННЫЕ__*/;
+  const ОПЛАТЫ = /*__ОПЛАТЫ__*/;
+  const ИП = ["ИП Губарев И. С.", "ИП Перфильев В. К.", "ИП Володихина В. В."];
+  const СРЕЗ = "/*__СРЕЗ__*/";
+  const КРИТ = 50000;
+  const КОРЗИНЫ = ["До 7 дн.", "8–14 дн.", "15–30 дн.", "31–60 дн.", "От 61 дн."];
+  const ЦВЕТА = ["#7ba05b", "#b8c46a", "#e0b341", "#cf7d35", "#a8301f"];
+
+  const руб = n => Math.round(n).toLocaleString("ru-RU").replace(/ /g, " ");
+  const кратко = n => n >= 1e6 ? (n / 1e6).toFixed(2).replace(".", ",") + " млн"
+                               : руб(n);
+
+  document.getElementById("asof").textContent =
+    new Date(СРЕЗ).toLocaleDateString("ru-RU", {day: "2-digit", month: "2-digit", year: "numeric"});
+
+  const всего = ДАННЫЕ.reduce((s, r) => s + r.total, 0);
+  const просроч = ДАННЫЕ.reduce((s, r) => s + r.overdue, 0);
+  const старые = ДАННЫЕ.reduce((s, r) => s + r.buckets[4], 0);
+  const сПросрочкой = ДАННЫЕ.filter(r => r.overdue > 0).length;
+  const критичных = ДАННЫЕ.filter(r => r.overdue > КРИТ).length;
+
+  document.getElementById("k-count").textContent = ДАННЫЕ.length;
+  document.getElementById("k-count-sub").textContent = сПросрочкой + " с просрочкой, " +
+    критичных + " критичных";
+  document.getElementById("k-total").innerHTML = кратко(всего) + ' <small>₽</small>';
+  document.getElementById("k-over").innerHTML = кратко(просроч) + ' <small>₽</small>';
+  document.getElementById("k-over-sub").textContent =
+    Math.round(просроч / всего * 100) + "% от всего долга";
+  document.getElementById("k-old").innerHTML = кратко(старые) + ' <small>₽</small>';
+  document.getElementById("k-old-sub").textContent =
+    Math.round(старые / всего * 100) + "% долга — старше двух месяцев";
+
+  document.getElementById("k-paid-k").textContent = "Оплачено за " + ОПЛАТЫ.days + " дн.";
+  document.getElementById("k-paid").innerHTML = кратко(ОПЛАТЫ.paid) + ' <small>₽</small>';
+  document.getElementById("k-paid-sub").textContent =
+    ОПЛАТЫ.cnt + " оплат от всех клиентов, не только должников";
+  document.getElementById("k-un").innerHTML = кратко(ОПЛАТЫ.un) + ' <small>₽</small>';
+  document.getElementById("k-un-sub").textContent =
+    `у ${ОПЛАТЫ.unDebtors} должников из ${ОПЛАТЫ.unClients} — разноска снимет ${руб(ОПЛАТЫ.unFix)} ₽`;
+
+  // ── один клиент может висеть на двух ИП: его перевели с юрлица на юрлицо,
+  //    старые накладные остались на прежнем, новые идут на новом
+  const группы = new Map();
+  ДАННЫЕ.forEach(r => {
+    if (!группы.has(r.g)) группы.set(r.g, []);
+    группы.get(r.g).push(r);
+  });
+  const двойные = [...группы.values()].filter(v => new Set(v.map(r => r.ip)).size > 1);
+  if (двойные.length) {
+    const сумма = двойные.flat().reduce((s, r) => s + r.total, 0);
+    const топ = двойные
+      .map(v => [v[0].name.split("(")[0].trim(), v.reduce((s, r) => s + r.total, 0)])
+      .sort((a, b) => b[1] - a[1]).slice(0, 4)
+      .map(([имя, с]) => `${имя} (${руб(с)} ₽)`).join(", ");
+    const блок = document.getElementById("dual");
+    блок.innerHTML = `<b>${двойные.length} клиентов числятся сразу у двух ИП — ${руб(сумма)} ₽.</b> `
+      + `Это переводы между юрлицами: старые накладные остались на прежнем ИП, новые идут на новом `
+      + `(в 1С такие карточки помечены «на ПЕРФИЛЬЕВ»). Крупнейшие: ${топ}. `
+      + `Чтобы увидеть долг клиента целиком, включите «свести клиента по всем ИП».`;
+    блок.hidden = false;
+  }
+
+  // ── карточки ИП
+  const ips = document.getElementById("ips");
+  ИП.forEach((имя, i) => {
+    const свои = ДАННЫЕ.filter(r => r.ip === i);
+    const долг = свои.reduce((s, r) => s + r.total, 0);
+    const про = свои.reduce((s, r) => s + r.overdue, 0);
+    const корзины = КОРЗИНЫ.map((_, b) => свои.reduce((s, r) => s + r.buckets[b], 0));
+    const полосы = корзины.map((v, b) =>
+      `<i style="width:${долг ? v / долг * 100 : 0}%;background:${ЦВЕТА[b]}" title="${КОРЗИНЫ[b]}: ${руб(v)} ₽"></i>`).join("");
+    const el = document.createElement("div");
+    el.className = "ip";
+    el.innerHTML = `<h3>${имя}</h3><div class="cnt">${свои.length} должников · `
+      + `${свои.filter(r => r.overdue > 0).length} с просрочкой</div>`
+      + `<dl><dt>Долг</dt><dd>${руб(долг)} ₽</dd>`
+      + `<dt>Просрочено</dt><dd class="red">${руб(про)} ₽</dd>`
+      + `<dt>Доля просрочки</dt><dd>${Math.round(про / долг * 100)}%</dd></dl>`
+      + `<div class="bar">${полосы}</div>`;
+    ips.appendChild(el);
+  });
+  document.getElementById("legend").innerHTML = "Возраст долга: " + КОРЗИНЫ
+    .map((к, i) => `<span><i style="background:${ЦВЕТА[i]}"></i>${к}</span>`).join("");
+
+  // ── фильтры
+  const seg = document.getElementById("seg-ip");
+  let фильтрИП = -1, сорт = "overdue", вниз = true;
+  [["Все ИП", -1], ...ИП.map((n, i) => [n.replace("ИП ", ""), i])].forEach(([подпись, зн]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = подпись;
+    b.setAttribute("aria-pressed", зн === фильтрИП);
+    b.onclick = () => { фильтрИП = зн; [...seg.children].forEach(x =>
+      x.setAttribute("aria-pressed", x === b)); отрисовать(); };
+    seg.appendChild(b);
+  });
+
+  const q = document.getElementById("q");
+  const onlyOver = document.getElementById("only-over");
+  const merge = document.getElementById("merge");
+  const onlyHang = document.getElementById("only-hang");
+  q.addEventListener("input", отрисовать);
+  onlyOver.addEventListener("change", отрисовать);
+  merge.addEventListener("change", отрисовать);
+  onlyHang.addEventListener("change", отрисовать);
+
+  function сведённые() {
+    const out = [];
+    for (const [, свои] of группы) {
+      if (свои.length === 1) { out.push(свои[0]); continue; }
+      const главный = свои.slice().sort((a, b) => b.total - a.total)[0];
+      out.push({
+        name: главный.name.split("с 10.08")[0].split("НА ПЕРФИЛЬЕВ")[0].trim(),
+        ip: главный.ip,
+        ips: [...new Set(свои.map(r => r.ip))],
+        total: свои.reduce((s, r) => s + r.total, 0),
+        overdue: свои.reduce((s, r) => s + r.overdue, 0),
+        days: Math.max(...свои.map(r => r.days)),
+        buckets: [0, 1, 2, 3, 4].map(b => свои.reduce((s, r) => s + r.buckets[b], 0)),
+        pd: свои.map(r => r.pd).filter(Boolean).sort((a, b) =>
+              a.split(".").reverse().join() < b.split(".").reverse().join() ? 1 : -1)[0] || "",
+        ps: (свои.filter(r => r.pd).sort((a, b) => (a.pdays ?? 1e6) - (b.pdays ?? 1e6))[0] || {}).ps || 0,
+        pdays: Math.min(...свои.map(r => r.pdays ?? 1e6)),
+        p30: свои.reduce((s, r) => s + r.p30, 0),
+        pc: (свои.find(r => r.pc) || {}).pc || "",
+        un: свои.reduce((s, r) => s + r.un, 0),
+        части: свои,
+      });
+    }
+    return out;
+  }
+
+  document.querySelectorAll("thead th").forEach(th => {
+    th.addEventListener("click", () => {
+      const ключ = th.dataset.sort;
+      if (сорт === ключ) вниз = !вниз; else { сорт = ключ; вниз = ключ !== "name" && ключ !== "ip"; }
+      document.querySelectorAll("thead th").forEach(x => x.removeAttribute("aria-sort"));
+      th.setAttribute("aria-sort", вниз ? "descending" : "ascending");
+      отрисовать();
+    });
+  });
+
+  function отрисовать() {
+    const текст = q.value.trim().toLowerCase();
+    const источник = merge.checked ? сведённые() : ДАННЫЕ;
+    let строки = источник.filter(r =>
+      (фильтрИП < 0 || (r.ips ? r.ips.includes(фильтрИП) : r.ip === фильтрИП)) &&
+      (!onlyOver.checked || r.overdue > 0) &&
+      (!onlyHang.checked || r.un > 0) &&
+      (!текст || r.name.toLowerCase().includes(текст)));
+
+    строки.sort((a, b) => {
+      let x, y;
+      if (сорт === "name") { x = a.name.toLowerCase(); y = b.name.toLowerCase(); }
+      else if (сорт === "ip") { x = ИП[a.ip]; y = ИП[b.ip]; }
+      else if (сорт === "old") { x = a.buckets[4]; y = b.buckets[4]; }
+      else if (сорт === "pdays") { x = a.pdays ?? 1e6; y = b.pdays ?? 1e6; }
+      else { x = a[сорт]; y = b[сорт]; }
+      if (x < y) return вниз ? 1 : -1;
+      if (x > y) return вниз ? -1 : 1;
+      return b.overdue - a.overdue;
+    });
+
+    document.getElementById("count").textContent =
+      `${строки.length} из ${источник.length} · долг ${руб(строки.reduce((s, r) => s + r.total, 0))} ₽`
+      + ` · просрочено ${руб(строки.reduce((s, r) => s + r.overdue, 0))} ₽`;
+
+    const tbody = document.getElementById("rows");
+    tbody.replaceChildren();
+    const куски = document.createDocumentFragment();
+    for (const r of строки) {
+      const tr = document.createElement("tr");
+      if (r.overdue > КРИТ) tr.className = "critical";
+      const дни = r.days > 60 ? "days old" : r.days > 0 ? "days hot" : "days zero";
+      const соседи = (группы.get(r.g) || []).filter(x => x !== r);
+      const также = !merge.checked && соседи.length
+        ? `<span class="also">также у ${соседи.map(x =>
+            `${ИП[x.ip].replace("ИП ", "")} — ${руб(x.total)} ₽`).join(", ")}</span>`
+        : "";
+      const чипы = r.ips
+        ? r.ips.map(i => `<span class="ipchip">${ИП[i].replace("ИП ", "")}</span>`).join(" ")
+        : `<span class="ipchip">${ИП[r.ip].replace("ИП ", "")}</span>`;
+      const метка = r.un > 0
+        ? `<span class="flag">⚑ не разнесено ${руб(r.un)} ₽ — сначала разнести, потом звонить</span>`
+        : "";
+      const оплата = r.pd
+        ? `<span class="paycell">${r.pd} · <b>${руб(r.ps)}</b></span>`
+        : `<span class="nopay">нет оплат</span>`;
+      const чужая = r.pc
+        ? `<span class="card2">платит на карточку «${r.pc}»</span>`
+        : "";
+      tr.innerHTML = `<td class="name">${r.name}${метка}${чужая}${также}</td>`
+        + `<td>${чипы}</td>`
+        + `<td class="num">${руб(r.total)}</td>`
+        + `<td class="num ${r.overdue ? "over" : "zero"}">${r.overdue ? руб(r.overdue) : "—"}</td>`
+        + `<td class="num"><span class="${дни}">${r.days || "—"}</span></td>`
+        + `<td class="num ${r.buckets[4] ? "" : "zero"}">${r.buckets[4] ? руб(r.buckets[4]) : "—"}</td>`
+        + `<td class="num">${оплата}</td>`
+        + `<td class="num ${r.p30 ? "" : "zero"}">${r.p30 ? руб(r.p30) : "—"}</td>`;
+      куски.appendChild(tr);
+    }
+    tbody.appendChild(куски);
+    document.getElementById("empty").hidden = строки.length > 0;
+  }
+
+  document.querySelector('thead th[data-sort="overdue"]').setAttribute("aria-sort", "descending");
+  отрисовать();
+</script>
