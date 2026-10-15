@@ -15,6 +15,7 @@
          venv/bin/python zp_files.py --only Дарья    — только по одному человеку
 """
 import argparse
+import logging
 import os
 import tempfile
 from datetime import datetime
@@ -25,7 +26,9 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from sync_odata import (BASES, SHEET_BASES, ALIASES, DATA_START_ROW, _contractor_names, _fetch_odata,
                         _open_spreadsheet, _parse_settings_period, aggregate_balances,
                         build_token_index, norm_name, soft_lookup)
-from zp_text import MONTHS, Sheet, big, num
+from zp_text import MONTHS, Sheet, big, load_summary, num
+
+logger = logging.getLogger(__name__)
 
 _ALIAS_NORM = {norm_name(k): v for k, v in ALIASES.items()}
 
@@ -154,10 +157,11 @@ def _write(path, records, bottom, month_label, after_raw=None):
         rr += 1
     # ⚠️подписи НЕ начинать с «=» — Excel примет строку за формулу и текст пропадёт
     # строки между двумя «фактами»: сырой факт → что из него не идёт в ЗП →
-    # сопоставимый с выгрузкой 1С итог (иначе два разных «факта» без объяснения)
+    # сопоставимый с выгрузкой 1С итог. Без них в файле два разных «факта»
+    # без объяснения, и Анна их путала (09.10.2026).
     running = fact_raw
     for label, val, strong in (after_raw or []):
-        if val is None:
+        if val is None:          # итоговая строка — то, что осталось от сырого факта
             val = running
         else:
             running += val
@@ -185,7 +189,7 @@ def build_files(only=None, outdir=None):
     outdir = outdir or tempfile.mkdtemp(prefix="zp_files_")
     ss = _open_spreadsheet()
     start, end, month_label, year = _period(ss)
-    sh = Sheet(ss.worksheet("СВОДНАЯ_ЗП").get("A1:H175", value_render_option="UNFORMATTED_VALUE"))
+    sh = load_summary(ss)
 
     beby = {}
     for r in ss.worksheet("БЕБИ_ЛИСТЫ").get("A4:J23"):
@@ -207,6 +211,8 @@ def build_files(only=None, outdir=None):
              if (v or "").strip()}
 
     def moved_sum(pred, col=9):
+        """Сумма по клиентам из списка «считаем с октября»: col=3 — сырые оплаты
+        (как в выгрузке 1С), col=9 — скорректированные (как в расчёте ЗП)."""
         tot = 0.0
         for grid in grids.values():
             for r in grid[DATA_START_ROW - 1:]:
@@ -223,6 +229,13 @@ def build_files(only=None, outdir=None):
     _alena_pred = lambda f, g, h: g == "Алена Черкашина" and h == "Ресторан"
     _alena_moved = moved_sum(_alena_pred)            # скорр. оплаты (идут в ЗП)
     _alena_moved_raw = moved_sum(_alena_pred, 3)     # сырые оплаты (как в 1С)
+    _alena_bottom = ["ФАКТ С ВЫЧЕТОМ БЕБИ — скорректированные оплаты"]
+    if _alena_moved:
+        _alena_bottom += [
+            ("в т.ч. переведённые — считаем с октября (скорр.)", -_alena_moved),
+            ("ИТОГО В РАСЧЁТ ЗП (база KPI)",
+             None),  # подставляется ниже, когда kpi() уже объявлен
+        ]
 
     def kpi(who, label, col=3):
         """Значение строки блока сотрудника из СВОДНОЙ (C по умолчанию, E при col=5)."""
@@ -257,16 +270,16 @@ def build_files(only=None, outdir=None):
              descr="Алёна Черкашина — рестораны на сопровождении",
              pred=_alena_pred,
              moved=_alena_moved,
+             # «факт» в файле двойной: сырой из 1С и после вычетов. Разводим явно,
+             # чтобы сырой факт можно было сверить с выгрузкой 1С один в один.
              after_raw=([("в т.ч. переведённые — считаем с октября (сырые)",
                           -_alena_moved_raw, False),
                          ("ИТОГО ФАКТ БЕЗ ПЕРЕВЕДЁННЫХ — сверяется с выгрузкой 1С",
                           None, True)] if _alena_moved_raw else None),
-             bottom=["ФАКТ С ВЫЧЕТОМ БЕБИ — скорректированные оплаты" if _alena_moved
-                     else "ФАКТ С ВЫЧЕТОМ БЕБИ (идёт в расчёт ЗП)"]
-                    + ([("в т.ч. переведённые — считаем с октября (скорр.)", -_alena_moved),
-                        ("ИТОГО В РАСЧЁТ ЗП (база KPI)",
-                         kpi("Алена Черкашина", "Оплаты ресторанов (скорр.)"))]
-                       if _alena_moved else [])
+             bottom=[_alena_bottom[0]]
+                    + [(lbl, kpi("Алена Черкашина", "Оплаты ресторанов (скорр.)")
+                        if val is None else val)
+                       for lbl, val in _alena_bottom[1:]]
                     + [("План на месяц", _plan_alena(ss)),
                        ("% выполнения плана",
                         kpi("Алена Черкашина", "% выполнения плана"))]),
@@ -301,6 +314,8 @@ def build_files(only=None, outdir=None):
                 if not name:
                     continue
                 if canon(name) in seen_in_base:
+                    logger.warning("%s: строка «%s» в листе дважды — вторую пропускаю",
+                                   base_name, name)
                     continue
                 seen_in_base.add(canon(name))
                 f = (r[5] or "").strip() if len(r) > 5 else ""
@@ -320,9 +335,9 @@ def build_files(only=None, outdir=None):
         cnt, cnt_beby, raw, adj = _write(path, records, rep["bottom"], month_label,
                                          after_raw=rep.get("after_raw"))
         cap = [f"📊 {rep['descr']}", f"{month_label} {year}", "", f"Контрагентов: {cnt}"]
-        moved_amt = rep.get("moved") or 0
+        moved = rep.get("moved") or 0
         moved_raw = -sum(v for _, v, _ in (rep.get("after_raw") or []) if v)
-        tail = "" if moved_amt else " (в расчёт ЗП)"
+        tail = "" if moved else " (в расчёт ЗП)"
         if cnt_beby:
             cap.append(f"с беби-листами: {cnt_beby} — помечены справа")
             cap.append(f"ФАКТ сырой (без вычета беби): {big(raw)} ₽")
@@ -333,9 +348,9 @@ def build_files(only=None, outdir=None):
             cap.append(f"ФАКТ с вычетом беби: {big(adj)} ₽{tail}")
         else:
             cap.append(f"Оплаты: {big(adj)} ₽{tail}")
-        if moved_amt:
-            cap.append(f"  минус переведённые (скорр.): −{big(moved_amt)} ₽")
-            cap.append(f"  ИТОГО В РАСЧЁТ ЗП: {big(adj - moved_amt)} ₽")
+        if moved:
+            cap.append(f"  минус переведённые (скорр.): −{big(moved)} ₽")
+            cap.append(f"  ИТОГО В РАСЧЁТ ЗП: {big(adj - moved)} ₽")
         out.append((path, "\n".join(cap), cnt, raw, adj, rep["who"]))
     return out
 

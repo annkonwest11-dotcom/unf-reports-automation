@@ -22,6 +22,12 @@ MSK = timezone(timedelta(hours=3))
 # Валерии Папоян (2026-08-11); диапазоны покрывают ровно строки сотрудников.
 _SHIFT_DAY_RANGES = ('E5:AI12', 'E17:AI19')
 
+# Ставки смен менеджера сопровождения (★Анна, 15.10.2026): будний день — обычная
+# смена, выходной — подработка по одной ставке, без надбавок. Тарифы продублированы
+# в НАСТРОЙКИ листа (раздел «ТАРИФЫ СМЕН») — при изменении править оба места.
+SOPR_WEEKDAY = 2500
+SOPR_WEEKEND = 3600
+
 _MONTHS_RU = {
     'январ': 1, 'феврал': 2, 'март': 3, 'апрел': 4,
     'май': 5, 'мая': 5, 'июн': 6, 'июл': 7, 'август': 8,
@@ -250,15 +256,11 @@ class SheetsClient:
         stavka = employee_row[3].strip() if len(employee_row) > 3 else "1"
 
         if report.manager_type == "сопровождение" and re.search(r'выход', report.day_type.lower()):
-            phones = report.phones.strip()
-            firms = report.firms.strip().lower() in ("да", "yes", "+")
-            if phones == "2" and firms:
-                return "3900"
-            if phones == "1" and firms:
-                return "3600"
-            if phones == "2":
-                return "2100"
-            return "1800"
+            # ★15.10.2026 (Анна): у сопровождения одна ставка выходного — 3600,
+            # без надбавок за телефоны и фирмы. Прежние 1800/2100/3600/3900
+            # складывались из «заказов выходных» и «фирм», и этих пунктов в
+            # шаблоне больше нет.
+            return str(SOPR_WEEKEND)
 
         if report.shift_type.lower().strip() in ("подработка", "подработки"):
             side = report.side_job_type.lower()
@@ -306,27 +308,18 @@ class SheetsClient:
         return bool(main_row or side_row)
 
     def _update_soprovozhdenie(self, report: Report, ws, all_rows: list, day: int, col_num: int) -> bool:
-        # Шаблон «Смена Менеджер сопровождение»:
-        #   Тип будний → осн.смена 2500; выходной → осн. нет.
-        #   Фирмы=да → +1000, ★ТОЛЬКО В ВЫХОДНОЙ (решение Анны 05.09.2026:
-        #     «убираем ставку за фирмы в будни 1800, только в выхи 1000»).
-        #   Заказы выходные → 1800 независимо от числа телефонов: ★надбавка за
-        #     второй телефон (+300, было 2100) убрана совсем, там же.
-        #   Заказы будние (доп телефон да/нет): да → +1800.
-        #   Подработки = сумма компонентов (0 → пусто).
+        # Шаблон «Смена Менеджер сопровождение» (★новый с 15.10.2026, решение Анны):
+        # в нём остались только Сотрудник / Дата / Выполненные задачи / Тип.
+        #   будний  → осн.смена 2500, подработка пусто;
+        #   выходной → подработка 3600, осн. пусто.
+        # Надбавок больше нет: ни за «заказы будние» (доп. телефон), ни за «заказы
+        # выходные», ни за фирмы в выходной (+1000) — смены фирм Анна проводит
+        # доп.премией. Старые поля шаблона, если их кто-то пришлёт, игнорируем:
+        # платить по ним больше нечего.
         is_weekend = bool(re.search(r'выход', report.day_type.lower()))
-        firms_yes = report.firms.strip().lower().startswith(("да", "+", "yes"))
-        ow = report.orders_weekend.strip()             # "1" | "2" | ""
-        obd_yes = report.orders_weekday.strip().lower().startswith(("да", "+", "yes"))
 
-        main_val = "" if is_weekend else "2500"
-        side = 0
-        if firms_yes and is_weekend:
-            side += 1000
-        if re.search(r'[12]', ow):
-            side += 1800
-        if obd_yes:
-            side += 1800
+        main_val = "" if is_weekend else str(SOPR_WEEKDAY)
+        side_val = str(SOPR_WEEKEND) if is_weekend else ""
 
         main_row = self._find_employee_row(
             all_rows, report.employee, self._section_employee_rows(all_rows, "основные смены"))
@@ -335,11 +328,11 @@ class SheetsClient:
         if main_row:
             ws.update_cell(main_row, col_num, main_val)
         if side_row:
-            ws.update_cell(side_row, col_num, str(side) if side > 0 else "")
+            ws.update_cell(side_row, col_num, side_val)
         logger.info(
-            "Сопровождение %s день=%d: тип=%s осн=%s подраб=%s (firms=%s ow=%r будн.доп=%s)",
-            report.employee, day, "вых" if is_weekend else "будн", main_val or "—",
-            side or "—", firms_yes, ow, obd_yes,
+            "Сопровождение %s день=%d: тип=%s осн=%s подраб=%s",
+            report.employee, day, "вых" if is_weekend else "будн",
+            main_val or "—", side_val or "—",
         )
         return bool(main_row or side_row)
 
@@ -349,9 +342,11 @@ class SheetsClient:
         header_row = all_rows[HEADER_ROW - 1] if len(all_rows) >= HEADER_ROW else []
 
         logger.info(
-            "Parsed: employee=%r manager=%r day_type=%r phones=%r firms=%r orders=%r shift=%r",
+            "Parsed: employee=%r manager=%r day_type=%r calls=%r phones=%r firms=%r "
+            "orders=%r shift=%r",
             report.employee, report.manager_type, report.day_type,
-            report.phones, report.firms, report.orders, report.shift_type,
+            report.calls_total, report.phones, report.firms, report.orders,
+            report.shift_type,
         )
         day = self._parse_day(report.date)
         if day is None:
@@ -469,6 +464,145 @@ class SheetsClient:
             'подработки': self._section_side_job_stats(all_rows, cols),
         }
 
+    # ── ЧИСТКА РУЧНЫХ ЯЧЕЕК ПРИ ЗАКРЫТИИ МЕСЯЦА ─────────────────────────────
+    # Что считается ручным вводом. Ключ — начало подписи в колонке A (строчными),
+    # значение — колонки, которые чистим. "auto" значит «C, если там введённое
+    # значение, иначе E»: у менеджеров доп.премию вводят прямо в C, а у РОП и
+    # помощника в C стоит формула (=E…), и ручная ячейка — E.
+    MANUAL_LABELS = {
+        "дополнительная премия": "auto",
+        # комментарий вводят в той же колонке, где сумма премии этого блока:
+        # у менеджеров это C, у РОП и помощника — E (там же, где ручной ввод)
+        "комментарий к доп.премии": "same",
+        "бонус за ведение сторис": "C",
+        "факт — оборот": "E",
+        "факт — поступления": "E",
+        "премия за контент": "E",
+        "клиенты smm": "E:G",
+        "найм:": "E:F",
+        "бонус за план найма": "E:F",
+        "премия за проекты": "E:F",
+    }
+    # ★НЕ чистим: «Конкурс (бонусы)» — раньше там стояла формула по листу КОНКУРС,
+    # и чистка её убивала (бонус Дарьи перестал считаться после закрытия июля 2026);
+    # «Факт — новые продажи» — это формула по листу НОВЫЕ_КЛИЕНТЫ, она сама
+    # пересчитается на новый месяц.
+
+    @classmethod
+    def _manual_clear_ranges(cls, values: list, formulas: list) -> list[str]:
+        """Диапазоны ручного ввода СВОДНОЙ — по подписям строк, а не по адресам.
+
+        Отдельно добирается ТАБЛИЦА ВЫПЛАТ: колонки C:E (авансы и официальная
+        часть) у всех строк сотрудников между шапкой и строкой ИТОГО.
+        """
+        def cell(rows, i, col):
+            r = rows[i - 1] if i - 1 < len(rows) else []
+            return str(r[col]).strip() if col < len(r) else ""
+
+        out, pay_rows = [], []
+        pay_start = None
+        prem_col = None        # колонка доп.премии текущего блока
+        for i in range(1, len(values) + 1):
+            label = cell(values, i, 0).lower()
+            if not label:
+                continue
+            if "таблица выплат" in label:
+                pay_start = i
+                continue
+            if pay_start and label.startswith("итого"):
+                pay_start = None if pay_rows else pay_start
+            if pay_start and i > pay_start + 1 and not label.startswith("итого"):
+                # строка сотрудника таблицы выплат: в B стоит ссылка на его ИТОГО
+                if cell(formulas, i, 1).startswith("="):
+                    pay_rows.append(i)
+                continue
+            cols = next((v for k, v in cls.MANUAL_LABELS.items() if label.startswith(k)), None)
+            if not cols:
+                continue
+            if cols == "auto":
+                cols = "E" if cell(formulas, i, 2).startswith("=") else "C"
+                prem_col = cols
+            elif cols == "same":
+                cols = prem_col or "C"
+            if ":" in cols:
+                a, b = cols.split(":")
+                out.append(f"{a}{i}:{b}{i}")
+            else:
+                out.append(f"{cols}{i}")
+        if pay_rows:
+            out.append(f"C{min(pay_rows)}:E{max(pay_rows)}")
+        return out
+
+    # ── ЖУРНАЛ ЗВОНКОВ ──────────────────────────────────────────────────────
+    # Звонки из отчётов смен раньше нигде не оставались: бот только сравнивал их
+    # с нормой и писал Анне, если мало. Для индивидуальных условий Виолетты
+    # (★Анна, 15.10.2026) норма считается ЗА МЕСЯЦ и по каждой смене («в среднем
+    # не менее 30, и ни одной смены ниже 25»), поэтому цифры нужно накапливать.
+    CALLS_SHEET = "ЗВОНКИ"
+    # ★Анна 15.10.2026: норма считается по «Звонки всего» — то, что менеджер
+    # пишет в отчёте смены. Разбивку по длительности храним, если её заполнили,
+    # но в норму она не идёт.
+    CALLS_HEADER = ["Месяц", "День", "Сотрудник", "Звонки всего",
+                    "< 1 мин", "1-2 мин", "2-5 мин", "> 5 мин", "Записано"]
+
+    def _calls_ws(self, month_label: str) -> gspread.Worksheet:
+        sh = self._gc.open_by_key(self._spreadsheet_id)
+        try:
+            return sh.worksheet(self.CALLS_SHEET)
+        except gspread.WorksheetNotFound:
+            ws = sh.add_worksheet(title=self.CALLS_SHEET, rows=400,
+                                  cols=len(self.CALLS_HEADER))
+            ws.update(values=[self.CALLS_HEADER], range_name="A1")
+            ws.freeze(rows=1)
+            logger.info("Created sheet %s (calls log)", self.CALLS_SHEET)
+            return ws
+
+    def log_calls(self, report: Report, month_label: str = "") -> bool:
+        """Звонки из отчёта смены → лист ЗВОНКИ (одна строка на смену).
+
+        Ключ строки — месяц + день + сотрудник: смену часто присылают повторно
+        (поправить задачи, не тот день), и журнал не должен от этого пухнуть.
+        Месяц берём тот же, в чей лист смен попала сама смена.
+        """
+        if not any((report.calls_total, report.calls_under_1min, report.calls_1_2min,
+                    report.calls_2_5min, report.calls_over_5min)):
+            return False
+        day = self._parse_day(report.date)
+        if day is None:
+            logger.warning("log_calls: cannot parse day from %r", report.date)
+            return False
+
+        def _num(v):
+            digits = re.sub(r"\D", "", str(v or ""))
+            return int(digits) if digits else 0
+
+        total = _num(report.calls_total)
+        under1 = _num(report.calls_under_1min)
+        m12 = _num(report.calls_1_2min)
+        m25 = _num(report.calls_2_5min)
+        over5 = _num(report.calls_over_5min)
+
+        if not month_label:
+            month_label = (self._shifts_ws().acell("A2").value or "").strip()
+        ws = self._calls_ws(month_label)
+        row = [month_label, day, report.employee, total, under1, m12, m25, over5,
+               datetime.now(MSK).strftime("%Y-%m-%d %H:%M")]
+
+        values = ws.get_all_values()
+        key = (month_label.strip().lower(), str(day), report.employee.strip().lower())
+        for i, r in enumerate(values[1:], start=2):
+            if len(r) < 3:
+                continue
+            if (r[0].strip().lower(), str(r[1]).strip(), r[2].strip().lower()) == key:
+                ws.update(values=[row], range_name=f"A{i}")
+                logger.info("log_calls: обновил %s день=%s всего=%s",
+                            report.employee, day, total)
+                return True
+        ws.append_row(row, value_input_option="USER_ENTERED")
+        logger.info("log_calls: записал %s день=%s всего=%s",
+                    report.employee, day, total)
+        return True
+
     def write_shift(self, employee_name: str, day: int) -> bool:
         ws = self._shifts_ws()
         all_rows = ws.get_all_values()
@@ -530,8 +664,11 @@ class SheetsClient:
             ("ДАННЫЕ_Володихина", "\U0001f4c7  ДАННЫЕ · Володихина — взаиморасчёты 1С",    None,       True),
             ("БЕБИ_ЛИСТЫ",       "\U0001f37c  БЕБИ-ЛИСТЫ — клиенты с вычетом 40%",          None,       True),
             ("НОВЫЕ_КЛИЕНТЫ",    "✨  НОВЫЕ КЛИЕНТЫ — поиск за месяц",                 None,       True),
-            ("КОНКУРС",          "\U0001f3c6  КОНКУРС — бонусы за результат",              None,       True),
         ]
+        # ★15.10.2026 (Анна): лист КОНКУРС убран из архива и из таблицы — конкурс
+        # считаем в отчёте по продажам. Листа может не быть и по другой причине
+        # (новая база, переименование), поэтому ниже пропускаем отсутствующие:
+        # закрытие месяца не должно падать из-за одного листа.
 
         def _col(s):
             n = 0
@@ -545,7 +682,11 @@ class SheetsClient:
 
         parts = []
         for name, hdr, rng, grp in SEC:
-            ws = sh.worksheet(name)
+            try:
+                ws = sh.worksheet(name)
+            except gspread.WorksheetNotFound:
+                logger.warning("архив месяца: листа %s нет — пропускаю", name)
+                continue
             if rng:
                 r0, c0, r1, c1 = parse_a1(rng)
                 vals = ws.get(rng, value_render_option='FORMATTED_VALUE')
@@ -586,7 +727,11 @@ class SheetsClient:
 
         if title in {w.title for w in sh.worksheets()}:
             sh.del_worksheet(sh.worksheet(title))
-        aws = sh.add_worksheet(title=title, rows=total_rows, cols=maxc, index=0)
+        # ★15.10.2026 (Анна: «архивные листы переноси в конец, они мешают»):
+        # архив месяца создаём ПОСЛЕДНИМ листом. Раньше стоял index=0 и каждое
+        # закрытие месяца выкидывало архив в начало, перед рабочими листами.
+        aws = sh.add_worksheet(title=title, rows=total_rows, cols=maxc,
+                               index=len(sh.worksheets()))
         aid = aws.id
         aws.update(matrix, "A1", value_input_option="RAW")
 
@@ -745,47 +890,36 @@ class SheetsClient:
         # Формулы в B/C/F–J сохраняются — лист готов к новому месяцу.
         sh.worksheet('БЕБИ_ЛИСТЫ').batch_clear(['A4:A23', 'D4:E23'])
 
-        # Clear СВОДНАЯ_ЗП manual input cells (доп.премии, комментарии,
-        # факты РОП, найм/контент Влады, авансы). Адреса — по раскладке после
-        # добавления стажёров София Хакимова / Виолетта Караханова (2026-09-01):
-        # всё ниже блока Лилии уехало на +28 строк (+3 строки в дашборде,
-        # +25 на два блока менеджера поиска). Формулы НЕ трогаем.
+        # Clear СВОДНАЯ_ЗП manual input cells (доп.премии, комментарии, факты РОП,
+        # найм/контент помощника, авансы). Формулы НЕ трогаем.
+        # ★15.10.2026: адреса больше НЕ прописаны числами. Раскладка СВОДНОЙ уже
+        # трижды уезжала (добавили стажёров — всё ниже сдвинулось на 28 строк), а
+        # после увольнения Лилии и Влады уедет снова; с жёсткими адресами чистка
+        # попадала бы в чужие ячейки и затирала формулы. Теперь строки ищутся по
+        # подписям — см. _manual_clear_ranges.
         ws_sv = sh.worksheet('СВОДНАЯ_ЗП')
-        manual_ranges = [
-            # ★ Строки «Конкурс (бонусы)» (C36 Дарья, C50 Ксения, C63 Лилия,
-            # C75 София, C88 Виолетта) НЕ чистим. Раньше там стояла формула по
-            # листу КОНКУРС, и чистка её убивала: после закрытия июля 2026 бонус
-            # конкурса у Дарьи перестал считаться (нашлось 14.08). С 31.08.2026
-            # конкурс остановлен решением Анны — там константа 0, а формулы лежат
-            # в docs/КОНКУРС_формулы_бэкап_2026-08-31.json. Правило то же: не трогать.
-            'C37:C38',            # Дарья: доп.премия, комментарий
-            'C49', 'C51:C52',     # Ксения: бонус-сторис, доп.премия, комментарий
-            'C64:C65',            # Лилия: доп.премия, комментарий
-            'C76:C77',            # София (стажёр): доп.премия, комментарий
-            'C89:C90',            # Виолетта (стажёр): доп.премия, комментарий
-            'C100:C101',          # Алена: доп.премия, комментарий
-            'E115', 'E119',       # РОП: факты (оборот-авто / поступления) — перезапишет синк 10:35
-            # ★ E110 (факт новых продаж) НЕ чистим — с 2026-08-04 это ФОРМУЛА
-            # по листу НОВЫЕ_КЛИЕНТЫ, она сама пересчитается на новый месяц.
-            # Чистка её убивала (проверено на закрытии июля 2026).
-            'E123:E124',          # РОП: доп.премия, комментарий
-            'E133',               # Влада: % контента
-            'E134:G134',          # Влада: клиенты SMM (A/B/C)
-            'E136:F140',          # Влада: найм (кол-во + ФИО) + бонус за план найма
-            'E142:F142',          # Влада: премия за проекты + название
-            'E146:E147',          # Влада: доп.премия, комментарий
-            'C154:E161',          # Таблица выплат: авансы / наличные / ЗП на карту
-        ]
+        manual_ranges = self._manual_clear_ranges(
+            ws_sv.get('A1:H200', value_render_option='UNFORMATTED_VALUE'),
+            ws_sv.get('A1:H200', value_render_option='FORMULA'))
+        logger.info("Чистим ручные ячейки СВОДНОЙ: %s", manual_ranges)
         ws_sv.batch_clear(manual_ranges)
 
         # Страховка: восстанавливаем формулу факта новых продаж РОП.
         # Строка ИТОГ листа НОВЫЕ_КЛИЕНТЫ отсекается по пустому менеджеру (C),
-        # иначе сумма удваивалась (баг 2026-08-04).
-        ws_sv.update(
-            [["=SUMIF('НОВЫЕ_КЛИЕНТЫ'!$C$4:$C$503;\"<>\";'НОВЫЕ_КЛИЕНТЫ'!$G$4:$G$503)"]],
-            'E110',
-            value_input_option='USER_ENTERED',
-        )
+        # иначе сумма удваивалась (баг 2026-08-04). Строку ищем по подписи —
+        # её номер уезжает вместе с раскладкой.
+        rows_a = [(i + 1, (r[0] if r else "")) for i, r in
+                  enumerate(ws_sv.get('A1:A200', value_render_option='UNFORMATTED_VALUE'))]
+        fact_row = next((i for i, a in rows_a
+                         if str(a).strip().lower().startswith("факт — новые продажи")), None)
+        if fact_row:
+            ws_sv.update(
+                [["=SUMIF('НОВЫЕ_КЛИЕНТЫ'!$C$4:$C$503;\"<>\";'НОВЫЕ_КЛИЕНТЫ'!$G$4:$G$503)"]],
+                f'E{fact_row}',
+                value_input_option='USER_ENTERED',
+            )
+        else:
+            logger.warning("не нашёл строку «Факт — новые продажи» — формулу не вернул")
 
         # Update period in НАСТРОЙКИ
         ws_settings.update([[next_label]], 'B4')

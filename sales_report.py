@@ -831,6 +831,19 @@ def plan_sheet(calc_rows, sheet, ym, all_clients=None):
     (правило 1), кандидатов на возврат — тоже (правило 2).
     """
     pairs, new_for_sheet, unmatched = match_rows(calc_rows, sheet)
+    # ★15.10.2026: строка-сирота (бланк есть, события по 1С нет) в лист не пишется
+    # НИКОГДА — ни новой строкой, ни правкой суммы. Иначе ДКР Истра, который ходит
+    # ритмом 1.5 дня, получил бы в лист 96 878 ₽ за всё окно бланка. Если клиент в
+    # листе уже стоит, бланк ничего не теряет — возвращаем строку в «события нет»,
+    # то есть ведём себя ровно как до правки. Спрашиваем только про потерянных
+    kept = []
+    for s, r in pairs:
+        if r["source"] == sales_ask.BLANK_NO_EVENT:
+            unmatched.append(s)
+        else:
+            kept.append((s, r))
+    pairs = sorted(kept, key=lambda p: p[0]["row"])
+    unmatched.sort(key=lambda s: s["row"])
     upd_until, upd_amount, conflicts, ask, dates = [], [], [], [], []
     filled_info = []
     for s, r in pairs:
@@ -964,6 +977,8 @@ def apply_plan(ws, plan, sheet, pending_rows=None, dry_run=False):
 SHEET_KIND = {"новый": "новый", "кандидат": "вернули",
               "вернули": "вернули", "разовый": "разовый"}
 SANCTIONED = ("бланк", "ответ Анны")      # чем подтверждается строка, кроме догадки 1С
+# о чём спрашиваем Анну кнопками: догадка 1С и бланк, под который 1С события не дала
+ASK_SOURCES = ("1С", sales_ask.BLANK_NO_EVENT)
 
 
 def pending_row(r, cols, sum_col, managers=None):
@@ -1040,8 +1055,14 @@ def summary_text(ym, plan, calc_rows):
     t = sheet_title(ym)
     twins = plan.get("twins", {})
     new_1c = [a for a in plan["ask"] if a["kind"] == "нет в листе"
-              and a["calc"]["kind"] == "новый" and a["client"] not in twins]
-    cand = [a for a in plan["ask"] if a["kind"] == "нет в листе" and a["calc"]["kind"] == "кандидат"]
+              and a["calc"]["kind"] == "новый" and a["calc"]["source"] == "1С"
+              and a["client"] not in twins]
+    cand = [a for a in plan["ask"] if a["kind"] == "нет в листе"
+            and a["calc"]["kind"] == "кандидат" and a["calc"]["source"] == "1С"]
+    # бланк менеджера есть, а 1С события не видит (разрыв меньше RETURN_GAP):
+    # вносить или нет — решает Анна, поэтому отдельным разделом
+    no_event_blank = [a for a in plan["ask"] if a["kind"] == "нет в листе"
+                      and a["calc"]["source"] == sales_ask.BLANK_NO_EVENT]
     lines = [f"ОТЧЁТ ПО ПРОДАЖАМ — лист «{t}»", ""]
     if new_1c:
         lines.append(f"НОВЫЕ по 1С без бланка — {len(new_1c)}, вносить?")
@@ -1057,6 +1078,17 @@ def summary_text(ym, plan, calc_rows):
             rhythm = f", обычный ритм {r['rhythm']:g}" if r["rhythm"] else ""
             lines.append(f"  • {r['client'][:42]} — заказ {r['event']:%d.%m} после "
                          f"{r['gap']} дн. тишины{rhythm}, {money(r['amount'])} ₽")
+        lines.append("")
+    if no_event_blank:
+        lines.append(f"БЛАНК ЕСТЬ, А ПО 1С СОБЫТИЯ НЕТ — {len(no_event_blank)}, вносить?")
+        for a in sorted(no_event_blank, key=lambda a: -a["amount"])[:15]:
+            r = a["calc"]
+            вид = "первый заказ" if r["kind"] == "новый" else "вернули"
+            тишина = (f", молчал {r['gap']} дн." if r.get("gap") else "")
+            ритм = f" при ритме {r['rhythm']:g}" if r.get("rhythm") else ""
+            кто = f" — бланк от {r['blank_author'][:24]}" if r.get("blank_author") else ""
+            lines.append(f"  • {r['client'][:42]} — бланк «{вид}» {r['event']:%d.%m}, "
+                         f"{money(r['amount'])} ₽{тишина}{ритм}{кто}")
         lines.append("")
     no_col = [a for a in plan["ask"] if a["kind"] == "нет суммы"]
     if no_col:
@@ -1511,6 +1543,9 @@ def attach_blanks(rows, blanks):
         hit = match_client(f"{b['client']} {b['entity']}", index)
         if not hit:
             hit = match_by_entity(b["entity"], allowed=set(by_client)) if b["entity"] else None
+        # ★привязался бланк или нет — помним: непривязанные подбирает blank_orphans,
+        # иначе слово менеджера пропадает молча (так 15.10.2026 потерялся Савва)
+        b["matched"] = bool(hit)
         if hit:
             r = by_client[hit]
             r["source"] = "бланк"
@@ -1519,6 +1554,56 @@ def attach_blanks(rows, blanks):
             if b["manager"]:
                 r["manager"] = manager_from_note(b["manager"]) or b["manager"]
     return rows
+
+
+def blank_orphans(blanks, hist, ym, max_lag=7):
+    """Бланки, которым в расчёте не нашлось строки → строки-сироты для вопроса Анне.
+
+    ★15.10.2026, Савва: бланк «возвращённый клиент» был, а в 1С разрыв 23 дня при
+    пороге RETURN_GAP=28 — `classify` события не дал, `attach_blanks` дописывать
+    было некуда, и бланк молча исчез: ни строки в листе, ни вопроса. Это тот же
+    класс дефекта, что `refused_orphans` (ответ про клиента вне расчёта).
+    Решение Анны: порог 28 дней не менять, а в таком случае СПРАШИВАТЬ её.
+    Поэтому `source` тут не «бланк» (он в SANCTIONED и ушёл бы в лист сам), а
+    `BLANK_NO_EVENT` — строка идёт в вопросы кнопками и в сводку.
+
+    Дата события — последняя накладная не позже даты бланка (в пределах `max_lag`
+    дней), иначе сама дата бланка: менеджер пишет бланк в день заказа или на
+    следующий. Сумма считается как у всех — часть 30-дневного окна внутри месяца.
+    """
+    if not blanks:
+        return []
+    m_start, m_end = month_bounds(ym)
+    index = so.build_token_index(list(hist))
+    out = []
+    for b in blanks:
+        if b.get("matched"):
+            continue
+        card = match_client(f"{b['client']} {b['entity']}", index)
+        if not card and b["entity"]:
+            card = match_by_entity(b["entity"], allowed=set(hist))
+        items = hist.get(card, [])
+        before = [d for d, _ in items if d <= b["date"] and (b["date"] - d).days <= max_lag]
+        event = max(before) if before else b["date"]
+        win_end = event + timedelta(days=WINDOW_DAYS - 1)
+        if win_end < m_start or event > m_end:
+            continue            # окно закрылось до этого листа или ещё не началось
+        earlier = [d for d, _ in items if d < event]
+        gap = (event - max(earlier)).days if earlier else None
+        out.append(dict(
+            client=card or f"{b['client']} {b['entity']}".strip(),
+            kind=b["kind"], event=event, window_end=win_end,
+            amount=round(sum(s for d, s in items
+                             if max(event, m_start) <= d <= min(win_end, m_end)), 2),
+            tail_next_month=round(sum(s for d, s in items if m_end < d <= win_end), 2),
+            gap=gap, rhythm=personal_rhythm(items, max(earlier)) if earlier else None,
+            orders=sum(1 for d, _ in items if m_start <= d <= m_end),
+            source=sales_ask.BLANK_NO_EVENT, blank_author=b["manager"], in_1c=bool(card),
+            manager=manager_from_note(b["manager"]) or None))
+    if out:
+        logger.info("бланков без события по 1С: %s — спрошу Анну (%s)",
+                    len(out), ", ".join(r["client"][:24] for r in out))
+    return out
 
 
 def apply_answers(rows, answers):
@@ -1579,8 +1664,25 @@ def refused_orphans(answers, state, rows):
 
 
 def remember_refused(ss, refused, excluded, today=None):
-    """«Не вношу» — в лист ИСКЛЮЧЕНИЯ: иначе в следующем месяце спросим снова."""
-    new = [(r["client"], REFUSED_REASON) for r in refused if r["client"] not in excluded]
+    """«Не вношу» — в лист ИСКЛЮЧЕНИЯ: иначе в следующем месяце спросим снова.
+
+    ★15.10.2026 — ДУБЛИ: сравнивали имена строкой, и один прогон добавил в лист
+    пять строк вместо двух. «ДЖЕМ ООО ДЖЕМ» (имя из бланка, карточки в 1С нет) не
+    узнало «ДЖЕМ (ООО ДЖЕМ)», уже стоявшее в листе, а СИКСТИ и ДРАЙ БАР пришли в
+    одном списке дважды — из apply_answers и из refused_orphans. Поэтому сверяем с
+    листом так же, как apply_excluded (по словам имени), и дедупим сам список.
+    """
+    index = so.build_token_index(list(excluded)) if excluded else None
+    new, seen = [], set()
+    for r in refused:
+        name = r["client"]
+        if name in excluded or (index and match_client(name, index, strict=True)):
+            continue
+        flat = sales_ask._flat(name)
+        if flat in seen:
+            continue
+        seen.add(flat)
+        new.append((name, REFUSED_REASON))
     if new:
         write_excluded(ss, new, (today or date.today()).strftime("%d.%m"))
         logger.info("в лист ИСКЛЮЧЕНИЯ добавлено по ответу Анны: %s", len(new))
@@ -1591,15 +1693,24 @@ def run(ym=None, live=False, dry_run=False, pending=True, today=None, ask=True):
     """Полный прогон: 1С → классификация → вычет → лист → вопросы и сводка Анне."""
     ym = ym or (today or date.today()).strftime("%Y-%m")
     hist, canon = load_history()
-    rows = apply_beby(classify(hist, ym), load_beby(ym, canon))
+    beby = load_beby(ym, canon)
+    rows = apply_beby(classify(hist, ym), beby)
     ss = open_spreadsheet()
-    rows = attach_blanks(rows, load_blanks(ss, ym))
+    blanks = load_blanks(ss, ym)
+    rows = attach_blanks(rows, blanks)
+    # бланк есть, а по 1С события нет — спрашиваем Анну, сами в лист не вносим
+    rows += apply_beby(blank_orphans(blanks, hist, ym), beby)
     ask_state = sales_ask.load_state()
     # ответы принимаем только по тем клиентам, про которых сами спрашивали
-    answers = sales_ask.read_answers(ask_state) if ask else {}
+    # прочитанные ответы складываем в состояние: в чате они уезжают из окна чтения
+    answers = sales_ask.remember_answers(
+        ask_state, sales_ask.read_answers(ask_state) if ask else {})
     excluded = load_excluded(ss)
     rows, refused = apply_answers(rows, answers)
-    refused += refused_orphans(answers, ask_state, rows)
+    # ★15.10.2026: сирот ищем среди ВСЕХ строк расчёта, включая только что
+    # отказанные — иначе отказ по клиенту из расчёта считался дважды и в лист
+    # ИСКЛЮЧЕНИЯ ехал дубль (так продублировались СИКСТИ и ДРАЙ БАР)
+    refused += refused_orphans(answers, ask_state, rows + refused)
     if refused and not dry_run:
         remember_refused(ss, refused, excluded, today=today)
     rows, dropped = apply_excluded(rows, excluded)
@@ -1627,7 +1738,7 @@ def run(ym=None, live=False, dry_run=False, pending=True, today=None, ask=True):
         # разобрала (вид стоит в колонке D), вопрос — лишний шум. 13.10 на этом
         # попалась: бот собрался спросить «разовый?» про 10 строк, уже помеченных ею
         новые = [a["calc"] for a in plan["ask"]
-                 if a["kind"] == "нет в листе" and a["calc"]["source"] == "1С"
+                 if a["kind"] == "нет в листе" and a["calc"]["source"] in ASK_SOURCES
                  and a["client"] not in twins]
         asked = sales_ask.ask_rows(новые, answers, state, dry_run=dry_run, now=today)
         # сумма посчитана, строка в листе есть, а колонка неизвестна (ни бланка, ни
@@ -1638,7 +1749,7 @@ def run(ym=None, live=False, dry_run=False, pending=True, today=None, ask=True):
                                     kind=sales_ask.ASK_WHO,
                                     managers=list(sheet["managers"].values()),
                                     rows_in_sheet=места)
-        if asked and not dry_run:
+        if (asked or answers) and not dry_run:
             sales_ask.save_state(state)
     return dict(ym=ym, sheet=ws.title, rows=rows, plan=plan, written=written, asked=asked,
                 answers=answers, refused=refused,
