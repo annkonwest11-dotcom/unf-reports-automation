@@ -241,6 +241,24 @@ def with_note(comment, note):
     return f"{comment} — {note}" if note else comment
 
 
+def bonus_rate(amount, base, plan_pct):
+    """Ставка бонуса словами — посчитанная ИЗ САМОЙ СУММЫ, а не прошитая в текст.
+
+    Правило в docs/СТАВКИ_и_KPI.md: факт <70% плана → 0, 70-99% → 0,7%,
+    ≥100% → 1%; и у сопровождения (план-бонус), и у РОП (оборот, поступления).
+    Но писать ставку в подпись руками нельзя: так она уже дважды разошлась с
+    суммой — 09.10.2026 у Алёны («1%» при 95% плана) и 15.10.2026 у РОП («0,7%»
+    при обороте 100,4%, тогда как сумма посчитана по 1%). Пока ставку берём из
+    отношения суммы к базе, подпись не может врать: формулу в СВОДНОЙ правит
+    Анна, а текст пересказывает то, что в ней получилось.
+
+    base == 0 (бонус поставлен руками, базы нет) — тогда по правилу от %плана.
+    """
+    if base:
+        return f"{round(amount / base * 100, 2):g}".replace(".", ",") + "%"
+    return "1%" if plan_pct >= 1 else "0,7%"
+
+
 def build_search(sh, name, month, facts, pay, new_plan_setting=0.0):
     """Менеджер поиска: смены + KPI по новым клиентам + % от всех оплат."""
     block, total = sh.block(name)
@@ -315,11 +333,9 @@ def build_support(sh, name, month, facts, pay, plan):
             f"({pct(plan_pct)} выполнения плана), итог с вычетом беби {big(base)} файл ниже 👇",
             line("+", oper, "1% от оплат клиентов")]
     if plan_bonus:
-        # ★09.10.2026: ставка план-бонуса зависит от %плана (≥100% → 1%, 70-99% → 0,7%),
-        # а в подписи стояло жёстко «1%» — при 95% плана текст противоречил сумме.
-        rate = "1%" if plan_pct >= 1 else "0,7%"
         out.append(line("+", plan_bonus,
-                        f"{rate} от оплат клиентов за выполнение плана на {pct(plan_pct)}"))
+                        f"{bonus_rate(plan_bonus, base, plan_pct)} от оплат клиентов "
+                        f"за выполнение плана на {pct(plan_pct)}"))
     if extra:
         out.append(line("+", extra, note.strip() or "премия"))
     return finish(out, total, name, pay)
@@ -359,11 +375,13 @@ def build_rop(sh, name, month, pay, plans):
     out.append(f"⭕️Оборот {big(ob_fact)} из {big(plans['oborot'])} — {pct(ob_pct)} плана")
     if ob_bonus:
         out.append(line("+", ob_bonus,
-                        f"0,7% от оплат ресторанов {big(rest_base)} за оборот"))
+                        f"{bonus_rate(ob_bonus, rest_base, ob_pct)} от оплат ресторанов "
+                        f"{big(rest_base)} за оборот"))
     out.append(f"⭕️Поступления {big(pos_fact)} из {big(plans['post'])} — {pct(pos_pct)} плана")
     if pos_bonus:
         out.append(line("+", pos_bonus,
-                        f"0,7% от оплат ресторанов {big(rest_base)} за поступления"))
+                        f"{bonus_rate(pos_bonus, rest_base, pos_pct)} от оплат ресторанов "
+                        f"{big(rest_base)} за поступления"))
     if extra:
         out.append(line("+", extra, note.strip() or "премия"))
     return finish(out, total, name, pay)
@@ -440,7 +458,13 @@ def finish(out, total, name, pay):
     if zp_card:
         out.append(f"−{rub(zp_card)} официальная зарплата на карту")
     out += ["", f"ИТОГ {big(rest)}"]
-    if not zp_card:
+    # ★15.10.2026: пометку обещаем ТОЛЬКО тем, у кого официальная часть вообще
+    # бывает. Признак — аванс на карту («Аванс 24 — на карту (офиц.)»): он идёт
+    # по той же ведомости, что и ЗП 9-го. Раньше условием было просто «E пустая»,
+    # и обещание «добавим 10-го» уезжало неоформленным (Анна-РОП, Лилия, София,
+    # Виолетта) — у них ни C, ни E не заполняются ни в одном месяце (проверено на
+    # июле, августе и сентябре 2026), и ИТОГ наличными уже окончательный.
+    if av_card and not zp_card:
         out.append("")
         out.append("(официальная зарплата — добавим 10-го, когда будут данные)")
     return "\n".join(out)
