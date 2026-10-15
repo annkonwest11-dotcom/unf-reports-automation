@@ -1169,6 +1169,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if ok:
         logger.info("Report saved | chat=%s employee=%s", chat.id, report.employee)
+        try:
+            sheets.log_calls(report)
+        except Exception:
+            # журнал звонков — не причина терять смену: она уже записана
+            logger.exception("Failed to log calls for %s", report.employee)
         await _check_calls_norm(report, context)
         await _check_early_report(report, context)
         await _check_wrong_date(report, context)

@@ -462,6 +462,77 @@ class SheetsClient:
             'подработки': self._section_side_job_stats(all_rows, cols),
         }
 
+    # ── ЖУРНАЛ ЗВОНКОВ ──────────────────────────────────────────────────────
+    # Звонки из отчётов смен раньше нигде не оставались: бот только сравнивал их
+    # с нормой и писал Анне, если мало. Для индивидуальных условий Виолетты
+    # (★Анна, 15.10.2026) норма считается ЗА МЕСЯЦ и по каждой смене («в среднем
+    # не менее 30, и ни одной смены ниже 25»), поэтому цифры нужно накапливать.
+    CALLS_SHEET = "ЗВОНКИ"
+    CALLS_HEADER = ["Месяц", "День", "Сотрудник", "Звонки всего",
+                    "< 1 мин", "1-2 мин", "2-5 мин", "> 5 мин",
+                    "Успешные (от 1 мин)", "Записано"]
+
+    def _calls_ws(self, month_label: str) -> gspread.Worksheet:
+        sh = self._gc.open_by_key(self._spreadsheet_id)
+        try:
+            return sh.worksheet(self.CALLS_SHEET)
+        except gspread.WorksheetNotFound:
+            ws = sh.add_worksheet(title=self.CALLS_SHEET, rows=400,
+                                  cols=len(self.CALLS_HEADER))
+            ws.update(values=[self.CALLS_HEADER], range_name="A1")
+            ws.freeze(rows=1)
+            logger.info("Created sheet %s (calls log)", self.CALLS_SHEET)
+            return ws
+
+    def log_calls(self, report: Report, month_label: str = "") -> bool:
+        """Звонки из отчёта смены → лист ЗВОНКИ (одна строка на смену).
+
+        Ключ строки — месяц + день + сотрудник: смену часто присылают повторно
+        (поправить задачи, не тот день), и журнал не должен от этого пухнуть.
+        «Успешные» считаем от 1 минуты: разговор короче минуты за успешный не
+        берём. Месяц берём тот же, в чей лист смен попала сама смена.
+        """
+        if not any((report.calls_total, report.calls_under_1min, report.calls_1_2min,
+                    report.calls_2_5min, report.calls_over_5min)):
+            return False
+        day = self._parse_day(report.date)
+        if day is None:
+            logger.warning("log_calls: cannot parse day from %r", report.date)
+            return False
+
+        def _num(v):
+            digits = re.sub(r"\D", "", str(v or ""))
+            return int(digits) if digits else 0
+
+        total = _num(report.calls_total)
+        under1 = _num(report.calls_under_1min)
+        m12 = _num(report.calls_1_2min)
+        m25 = _num(report.calls_2_5min)
+        over5 = _num(report.calls_over_5min)
+        # разбивку заполняют не всегда: без неё успешными считаем все звонки
+        success = m12 + m25 + over5 if (m12 or m25 or over5 or under1) else total
+
+        if not month_label:
+            month_label = (self._shifts_ws().acell("A2").value or "").strip()
+        ws = self._calls_ws(month_label)
+        row = [month_label, day, report.employee, total, under1, m12, m25, over5,
+               success, datetime.now(MSK).strftime("%Y-%m-%d %H:%M")]
+
+        values = ws.get_all_values()
+        key = (month_label.strip().lower(), str(day), report.employee.strip().lower())
+        for i, r in enumerate(values[1:], start=2):
+            if len(r) < 3:
+                continue
+            if (r[0].strip().lower(), str(r[1]).strip(), r[2].strip().lower()) == key:
+                ws.update(values=[row], range_name=f"A{i}")
+                logger.info("log_calls: обновил %s день=%s всего=%s успешных=%s",
+                            report.employee, day, total, success)
+                return True
+        ws.append_row(row, value_input_option="USER_ENTERED")
+        logger.info("log_calls: записал %s день=%s всего=%s успешных=%s",
+                    report.employee, day, total, success)
+        return True
+
     def write_shift(self, employee_name: str, day: int) -> bool:
         ws = self._shifts_ws()
         all_rows = ws.get_all_values()
