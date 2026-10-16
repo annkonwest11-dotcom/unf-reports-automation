@@ -78,11 +78,17 @@ def parse(path):
         supplier = ms.group(1).strip()
 
     items, lines = [], text.splitlines()
-    for i, line in enumerate(lines[:-1]):
+    for i, line in enumerate(lines):
         mi = re.match(r"^\s*(\d{1,2})\s+(\D[^\d]*?)\s*$", line)
-        if not mi:
-            continue
-        data = lines[i + 1]
+        if mi and i + 1 < len(lines):
+            name, data = mi.group(2), lines[i + 1]
+        else:
+            # ★pypdf ≥ 6.20 склеивает название и цифры в ОДНУ строку
+            # («1 Салатный микс - кг 166 - 10,60 …»), старый клал их на разные.
+            mj = re.match(r"^\s*(\d{1,2})\s+(\D.*?)\s+(?=-\s+(?:кг|шт|уп)\s)", line)
+            if not mj:
+                continue
+            name, data = mj.group(2), line[mj.end():]
         md = re.match(rf"^\s*-\s+(кг|шт|уп)\s+(?:\d+|-)\s+-\s+({NUM})\s+", data)
         if not md:
             continue
@@ -90,7 +96,7 @@ def parse(path):
         unit, qty = md.group(1), _num(md.group(2))
         packs = round(qty * PACKS_PER_KG) if unit == "кг" else round(qty)
         summ = _num(tail[0]) if tail else 0.0
-        items.append((mi.group(2).strip(), packs, summ))
+        items.append((name.strip(), packs, summ))
 
     mt = re.search(rf"Итого\s+{NUM}\s+[\d,\s]+\s+[\d,\s]+\s+X\s+({NUM})\s+X", text)
     total = _num(mt.group(1)) if mt else round(sum(s for _, _, s in items), 2)

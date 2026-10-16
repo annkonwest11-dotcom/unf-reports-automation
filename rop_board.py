@@ -511,6 +511,11 @@ def read_plans(spreadsheet):
         elif "менеджеры поиска" in low and "новых клиентов" in what:
             plans["search_default"] = val or PLAN_SEARCH_DEFAULT
         elif "новых клиентов" in what and val:
+            # ★16.10.2026: «личный план» — отдельная строка Виолетты под
+            # индивидуальный бонус (250 000). Общая сетка и борд считаются от
+            # обычного плана, иначе эта строка перетирала бы его: она лежит ниже.
+            if "личный план" in what:
+                continue
             plans["personal"][first_name(who)] = val
         elif "оплаты ресторанов" in what and val:
             # план менеджера сопровождения (НАСТРОЙКИ!C9 у Алёны) — ключ полным именем,

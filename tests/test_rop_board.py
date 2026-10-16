@@ -493,3 +493,42 @@ class TestЗапаснаяМодель(unittest.TestCase):
         модели = rb.board_models()
         self.assertTrue(any(m.endswith(":free") for m in модели),
                         "нужна модель с нулевой ценой как последний рубеж")
+
+
+class TestPersonalPlanVsIndividual(unittest.TestCase):
+    """★16.10.2026: строка «личный план» Виолетты не должна перетирать общий план.
+
+    Она лежит НИЖЕ обычной строки плана, и без фильтра борд считал её процент
+    выполнения от 250 000 вместо 210 000.
+    """
+
+    ROWS = [
+        ["Месяц и год расчёта", "Октябрь 2026", "", ""],
+        ["Менеджеры поиска (каждый)", "Оборот новых клиентов (план)", "210000", ""],
+        ["Виолетта Караханова (стажёр)", "Оборот новых клиентов (план)", "210000", ""],
+        ["Виолетта Караханова — личный план (инд. условия)",
+         "Оборот новых клиентов (личный план)", "250000", ""],
+    ]
+
+    def test_obschiy_plan_ostaetsya(self):
+        plans = rb.read_plans(_FakeSS(self.ROWS))
+        self.assertEqual(plans["personal"]["Виолетта"], 210000)
+
+    def test_bez_lichnogo_plana_vse_kak_ran_she(self):
+        plans = rb.read_plans(_FakeSS(self.ROWS[:3]))
+        self.assertEqual(plans["personal"]["Виолетта"], 210000)
+        self.assertEqual(plans["search_default"], 210000)
+
+
+class _FakeSS:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def worksheet(self, name):
+        assert name == "НАСТРОЙКИ"
+        rows = self._rows
+
+        class WS:
+            def get_all_values(self):
+                return rows
+        return WS()

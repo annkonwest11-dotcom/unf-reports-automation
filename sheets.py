@@ -494,6 +494,65 @@ class SheetsClient:
             'подработки': self._section_side_job_stats(all_rows, cols),
         }
 
+    # ── СТАЖЁРСКИЕ СМЕНЫ (ставка 1700 за первые 7 смен ЗА ВСЁ ВРЕМЯ) ────────
+    # В НАСТРОЙКАХ у каждого стажёра строка «<ФИО> — смен отработано в прошлых
+    # месяцах». Формула ставки в СМЕНЫ!D сравнивает её + смены текущего месяца
+    # с лимитом. Счётчик надо наращивать при каждом закрытии месяца, иначе
+    # лимит обнуляется и дешёвые смены начинаются заново.
+    TRAINEE_LABEL = "смен отработано в прошл"
+
+    @staticmethod
+    def _trainee_counters(settings_col_a: list[str]) -> dict[str, int]:
+        """{ФИО: номер строки НАСТРОЕК} по подписям «<ФИО> — смен отработано…»."""
+        out = {}
+        for i, label in enumerate(settings_col_a, start=1):
+            low = (label or "").lower()
+            if SheetsClient.TRAINEE_LABEL not in low:
+                continue
+            name = re.split(r"[—–-]", label, maxsplit=1)[0].strip()
+            if name:
+                out[name] = i
+        return out
+
+    @staticmethod
+    def _shift_counts(smeny_values: list) -> dict[str, int]:
+        """{ФИО: сколько смен проставлено} по строкам листа СМЕНЫ (колонки E:AI)."""
+        out = {}
+        for row in smeny_values:
+            name = (row[1] if len(row) > 1 else "").strip()
+            # строка сотрудника всегда пронумерована в A; у шапки там «№», и без
+            # этой проверки она сама считалась сотрудником с тремя «сменами»
+            num = (row[0] if row else "").strip()
+            if not name or not num.isdigit():
+                continue
+            cells = [c for c in row[4:35] if str(c).strip()]
+            if cells:
+                out[name] = out.get(name, 0) + len(cells)
+        return out
+
+    def _bump_trainee_shifts(self, ws_settings, ws_smeny) -> dict[str, int]:
+        """Прибавить смены закрываемого месяца к счётчику каждого стажёра."""
+        counters = self._trainee_counters(ws_settings.col_values(1))
+        if not counters:
+            return {}
+        counts = self._shift_counts(ws_smeny.get("A1:AI60"))
+        updates, result = [], {}
+        for name, row in counters.items():
+            worked = counts.get(name, 0)
+            if not worked:
+                continue
+            was = ws_settings.acell(f"B{row}").value
+            try:
+                was = int(float(str(was).replace(",", ".").strip() or 0))
+            except ValueError:
+                was = 0
+            result[name] = was + worked
+            updates.append({"range": f"B{row}", "values": [[was + worked]]})
+        if updates:
+            ws_settings.batch_update(updates, value_input_option="USER_ENTERED")
+            logger.info("Стажёрские смены накоплены: %s", result)
+        return result
+
     # ── ЧИСТКА РУЧНЫХ ЯЧЕЕК ПРИ ЗАКРЫТИИ МЕСЯЦА ─────────────────────────────
     # Что считается ручным вводом. Ключ — начало подписи в колонке A (строчными),
     # значение — колонки, которые чистим. "auto" значит «C, если там введённое
@@ -863,6 +922,15 @@ class SheetsClient:
         # Clear СМЕНЫ data (days only, formulas in col AJ stay)
         ws_smeny = sh.worksheet('СМЕНЫ')
         clear_a1, _ = self._shift_ranges(ws_smeny)
+        # ★16.10.2026: ДО очистки копим стажёрские смены. Счётчик «смен отработано
+        # в прошлых месяцах» в НАСТРОЙКАХ обновлялся руками («Обновлять при
+        # закрытии месяца») — и в октябре остался нулём: София и Виолетта снова
+        # получили по 1700 за первые смены, хотя свои 7 выбрали ещё в сентябре.
+        # Правило Анны: 1700 — за ПЕРВЫЕ СЕМЬ смен за всё время, а не каждый месяц.
+        try:
+            self._bump_trainee_shifts(ws_settings, ws_smeny)
+        except Exception:
+            logger.exception("не удалось обновить счётчик стажёрских смен")
         ws_smeny.batch_clear(clear_a1)
         next_label = _next_month_label(period)
         ws_smeny.update([[next_label]], 'A2')

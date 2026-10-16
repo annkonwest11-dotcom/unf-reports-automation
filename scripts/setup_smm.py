@@ -110,7 +110,7 @@ def main():
     ns = nastr.get("A1:D60")
     ns_names = [((r or [""])[0] or "").strip() for r in ns]
     old_sec = next((i for i, v in enumerate(ns_names, start=1)
-                    if v.startswith("КПИ ВЛАДЫ")), None)
+                    if v.startswith("КПИ ВЛАДЫ") or v.startswith(SECTION)), None)
     if old_sec:
         end = next((i for i, v in enumerate(ns_names, start=1)
                     if i > old_sec and v.isupper() and v), len(ns_names) + 1)
@@ -161,8 +161,10 @@ def main():
 
     # ── 2. СВОДНАЯ: подгоняем размер блока ─────────────────────────────────
     names = col_a(svod)
-    head = row_starts(names, f"  {who}")
     itogo = row_of(names, f"ИТОГО ЗП — {who}")
+    head = block_head(names, who, itogo)
+    if not head:
+        raise SystemExit(f"после правки НАСТРОЕК не нашёл заголовок блока {who}")
     inner = itogo - head - 1
     if inner > need:
         sh.batch_update({"requests": [{"deleteDimension": {"range": {
@@ -199,11 +201,28 @@ def main():
             "100 000 просмотров → 1 000 · 500 000 → 2 500 · 1 млн → 5 000; только органика, "
             "за ролик по высшему порогу, фиксируется на 30-й день", 0, "", "", "← сумма и расшифровка в D"]]},
         {"range": f"A{ex}:F{ex}", "values": [[ROW_EXTRA, "", "", "", "", "← введите сумму"]]},
-        {"range": f"A{ex + 1}", "values": [[ROW_NOTE]]},
+        # B чистим явно: в строке мог остаться текст прежней подписи блока
+        {"range": f"A{ex + 1}:B{ex + 1}", "values": [[ROW_NOTE, ""]]},
     ], value_input_option="USER_ENTERED")
+
+    # ★формат ставим явно: вставленные строки наследуют его от соседа сверху, и
+    # на живой таблице 16.10 «Контент-план» и ИТОГО уехали в проценты (25 000 ₽
+    # показывалось как 2 500 000%). Старые строки блока были «% плана» и «% от оплат».
+    sh.batch_update({"requests": [{"repeatCell": {
+        "range": {"sheetId": svod.id, "startRowIndex": head, "endRowIndex": ex + 1,
+                  "startColumnIndex": 2, "endColumnIndex": 4},
+        "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER",
+                                                        "pattern": "#,##0"}}},
+        "fields": "userEnteredFormat.numberFormat"}}]})
 
     names = col_a(svod)
     itogo = row_of(names, f"ИТОГО ЗП — {who}")
+    sh.batch_update({"requests": [{"repeatCell": {
+        "range": {"sheetId": svod.id, "startRowIndex": itogo - 1, "endRowIndex": itogo,
+                  "startColumnIndex": 2, "endColumnIndex": 3},
+        "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER",
+                                                        "pattern": "#,##0"}}},
+        "fields": "userEnteredFormat.numberFormat"}}]})
     svod.update(values=[[f"=C{p1}+C{p2}+C{pl}+IF(ISNUMBER(C{ld});C{ld};0)"
                          f"+IF(ISNUMBER(C{re_});C{re_};0)+IF(ISNUMBER(C{ex});C{ex};0)"]],
                 range_name=f"C{itogo}", value_input_option="USER_ENTERED")

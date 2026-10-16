@@ -141,8 +141,8 @@ def main():
 
     # 3. ставка 115% — 4% вместо 3%
     cur = svod.acell(f"C{rate_row}", value_render_option="FORMULA").value
-    new = cur.replace("IF(C{0}>=1,15;0,03;".format(rate_row - 2),
-                      "IF(C{0}>=1,15;{1};".format(rate_row - 2, RATE_115))
+    # ступень 115% в формуле выглядит как «>=1,15;0,03;» — ровно её и поднимаем
+    new = cur.replace(">=1,15;0,03;", f">=1,15;{RATE_115};")
     if new == cur:
         print(f"⚠️ не нашёл ступень 115% в формуле C{rate_row} — поправь руками: {cur}")
     else:
@@ -155,7 +155,9 @@ def main():
     itogo_new = itogo + 6
     cur = svod.acell(f"C{itogo_new}", value_render_option="FORMULA").value
     assert cur and cur.startswith("="), f"ИТОГО не на месте: C{itogo_new}={cur!r}"
-    svod.update(values=[[cur[:-1] + f"+C{r0 + 5})" if cur.endswith(")") else cur + f"+C{r0 + 5}"]],
+    # дописываем СНАРУЖИ: внутрь IFERROR(...;0) слагаемое попало бы в ветку
+    # «если ошибка» и молча не считалось — поймано на живой таблице 16.10.2026
+    svod.update(values=[[cur + f"+C{r0 + 5}"]],
                 range_name=f"C{itogo_new}", value_input_option="USER_ENTERED")
     print(f"готово: строки {r0}-{r0 + 5}, ИТОГО {itogo_new}")
 
