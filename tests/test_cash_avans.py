@@ -87,3 +87,48 @@ class TestSummary(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPlanFromLedger(unittest.TestCase):
+    """★16.10.2026: план наличных строится из ведомости, а не из номеров строк.
+
+    Прежний список (154-161) писал наличные в пустые строки ниже таблицы —
+    ведомость уехала на 114-122 после приёма стажёров и двух увольнений.
+    """
+
+    LEDGER = [(116, "Дарья Вольнова"), (117, "Ксения Наныкина"),
+              (118, "София Хакимова"), (119, "Виолетта Караханова"),
+              (120, "Алена Черкашина"), (121, "Анна Кононенко (РОП)")]
+
+    def test_stroki_iz_vedomosti(self):
+        plan = ca.build_plan(self.LEDGER)
+        self.assertEqual([(r, n) for r, n, _ in plan],
+                         [(117, "Ксения"), (118, "София"), (119, "Виолетта"),
+                          (120, "Алена"), (121, "Анна")])
+
+    def test_darya_bez_nalichnyh(self):
+        plan = ca.build_plan(self.LEDGER)
+        self.assertNotIn("Дарья", [n for _, n, _ in plan])
+        self.assertEqual(ca.no_cash_rows(self.LEDGER), {116: "Дарья"})
+
+    def test_pravila_po_familii(self):
+        plan = dict((n, rule) for _, n, rule in ca.build_plan(self.LEDGER))
+        self.assertEqual(plan["Ксения"], ("total", 20000))
+        self.assertEqual(plan["Алена"], ("total", 15000))
+        self.assertEqual(plan["Анна"], ("fixed", 15000))
+        self.assertEqual(plan["София"], ("ask", None))
+
+    def test_sdvig_vedomosti_ne_lomaet(self):
+        ledger = [(r - 40, n) for r, n in self.LEDGER]
+        plan = ca.build_plan(ledger)
+        self.assertEqual(plan[0][0], 77)
+        self.assertEqual(plan[0][1], "Ксения")
+
+    def test_novyy_sotrudnik_sprashivaem(self):
+        plan = ca.build_plan([(130, "Ия Шарашанидзе")])
+        self.assertEqual(plan, [(130, "Ия", ("ask", None))])
+
+    def test_summa_dobivaetsya_do_rovnogo(self):
+        # Ксения: офиц. 12 253,78 → наличными 20 000 − 12 253 = 7 747
+        _, _, rule = ca.build_plan(self.LEDGER)[0]
+        self.assertEqual(ca.compute_default(rule, 12253.78), 7747)

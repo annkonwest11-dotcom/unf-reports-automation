@@ -62,24 +62,36 @@ def _norm(s):
     return " ".join(str(s or "").replace("ё", "е").lower().split())
 
 
-def payment_rows(ws):
-    """{фамилия: номер строки} по ТАБЛИЦЕ ВЫПЛАТ листа СВОДНАЯ_ЗП.
+def ledger_rows(ws):
+    """[(номер строки, ФИО)] — ВСЕ сотрудники ТАБЛИЦЫ ВЫПЛАТ листа СВОДНАЯ_ЗП.
 
-    Ищем строки по ФИО: кадровые изменения двигают ведомость, а подписи — нет.
-    Кого в ведомости нет (уволился), в результат не попадает — писать ему некуда.
+    Ищем по подписям: кадровые изменения двигают ведомость, а подписи — нет.
+    Нужно двум потребителям: официальным авансам (только оформленные) и
+    наличным (все, включая РОП).
     """
     rows = ws.get("A1:A200", value_render_option="UNFORMATTED_VALUE")
     names = [(i + 1, str(r[0]).strip() if r else "") for i, r in enumerate(rows)]
     start = next((i for i, a in names if "ТАБЛИЦА ВЫПЛАТ" in a.upper()), None)
     if start is None:
         logger.warning("в %s нет строки «ТАБЛИЦА ВЫПЛАТ» — писать некуда", SHEET_NAME)
-        return {}
-    out = {}
+        return []
+    out = []
     for i, a in names:
-        if i <= start or not a:
+        if i <= start + 1 or not a:          # +1: строка-шапка «Сотрудник»
             continue
         if a.upper().startswith("ИТОГО"):
             break
+        out.append((i, a))
+    return out
+
+
+def payment_rows(ws):
+    """{фамилия: номер строки} — только те, у кого бывает официальная часть.
+
+    Кого в ведомости нет (уволился), в результат не попадает — писать некуда.
+    """
+    out = {}
+    for i, a in ledger_rows(ws):
         for surname, full in EMPLOYEES.items():
             if _norm(full) == _norm(a) or _norm(surname) in _norm(a):
                 out[surname] = i
