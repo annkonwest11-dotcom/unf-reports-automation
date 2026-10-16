@@ -119,3 +119,40 @@ class TestManualClearRanges(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSmmAndIndividual(unittest.TestCase):
+    """★16.10.2026: новые ручные строки SMM и индивидуальных условий."""
+
+    def _ranges(self, labels):
+        values = [[lbl] for lbl in labels]
+        formulas = [[lbl, "", ""] for lbl in labels]
+        return SheetsClient._manual_clear_ranges(values, formulas)
+
+    def test_smm_stroki_chistyatsya(self):
+        got = self._ranges(["Живых подписчиков Instagram (Greench)",
+                            "Оклад — аккаунт 1 (Greench)",
+                            "Контент-план — выполнено каналов",
+                            "Премия за новых клиентов из соцсетей",
+                            "Премия за залетевшие Reels"])
+        self.assertEqual(got, ["D1", "D3", "C4:D4", "C5:D5"])
+
+    def test_oklad_ne_chistim(self):
+        # оклад — формула по подписчикам, чистка убила бы её
+        self.assertEqual(self._ranges(["Оклад — аккаунт 1 (Greench)",
+                                       "Оклад — аккаунт 2 (Вячеслав)"]), [])
+
+    def test_kontent_plan_tolko_D(self):
+        # в C формула D×ставка — её трогать нельзя
+        self.assertEqual(self._ranges(["Контент-план — выполнено каналов"]), ["D1"])
+
+    def test_individualnye_usloviya(self):
+        got = self._ranges(["Оборот новых клиентов (отгрузки)", "% личного плана",
+                            "Звонки — норма", "Дегустации — норма",
+                            "Индивидуальный бонус"])
+        self.assertEqual(got, ["D3", "D4", "C5"])
+
+    def test_mertvye_metki_vlady_ubrany(self):
+        for dead in ("Бонус за ведение сторис", "Премия за контент-план (SMM)",
+                     "Клиенты SMM", "Найм: закрыто вакансий"):
+            self.assertEqual(self._ranges([dead]), [], dead)

@@ -128,3 +128,67 @@ class TestStaffFromSheet(unittest.TestCase):
             ["ИТОГО ЗП — Дарья Вольнова", "", 1000],
         ])
         self.assertEqual(sh.staff(), [("Дарья Вольнова", "поиск")])
+
+
+class TestSmmText(unittest.TestCase):
+    """★16.10.2026: Ксения перешла с поиска на SMM — у неё свой расчёт."""
+
+    PAY = {"Ксения Наныкина": (55000, 12811, 0, 0, 42189)}
+
+    def _sheet(self, subs=0, pay1=25000, pay2=0, channels=0, plan=0,
+               leads=0, reels=0, extra=0, note=""):
+        return Sheet([
+            ["СВОДНАЯ ЗАРПЛАТНАЯ ВЕДОМОСТЬ"],
+            ["SMM"],
+            ["  Ксения Наныкина  |  SMM"],
+            ["Живых подписчиков Instagram (Greench)", "ставит директор", "", subs],
+            ["Оклад — аккаунт 1 (Greench)", "25 000 ₽", pay1],
+            ["Оклад — аккаунт 2 (Вячеслав)", "когда запустится", pay2],
+            ["Контент-план — выполнено каналов", "по 5 000", plan, channels],
+            ["Премия за новых клиентов из соцсетей", "С/В/А", leads],
+            ["Премия за залетевшие Reels", "порог", reels],
+            ["Дополнительная премия", "", extra],
+            ["Комментарий к доп.премии", note],
+            ["ИТОГО ЗП — Ксения Наныкина", "", pay1 + pay2 + plan + leads + reels + extra],
+        ])
+
+    def test_rol_smm_iz_sekcii(self):
+        self.assertEqual(self._sheet().staff(), [("Ксения Наныкина", "smm")])
+
+    def test_oklad_s_podpischikami(self):
+        from zp_text import build_smm
+        t = build_smm(self._sheet(subs=1240, pay1=26000), "Ксения Наныкина",
+                      "ОКТЯБРЬ", self.PAY)
+        self.assertIn("ведение Instagram Greench (1240 подписчиков)", t)
+
+    def test_bez_podpischikov_bez_skobok(self):
+        from zp_text import build_smm
+        t = build_smm(self._sheet(), "Ксения Наныкина", "ОКТЯБРЬ", self.PAY)
+        self.assertIn("ведение Instagram Greench", t)
+        self.assertNotIn("подписчиков", t)
+
+    def test_nulevye_stroki_ne_pokazyvaem(self):
+        from zp_text import build_smm
+        t = build_smm(self._sheet(), "Ксения Наныкина", "ОКТЯБРЬ", self.PAY)
+        for miss in ("второго аккаунта", "контент-план", "Reels", "соцсетей"):
+            self.assertNotIn(miss, t)
+
+    def test_kontent_plan_sklonenie(self):
+        from zp_text import build_smm
+        for cnt, word in ((1, "1 канал"), (3, "3 канала"), (4, "4 канала")):
+            t = build_smm(self._sheet(channels=cnt, plan=cnt * 5000),
+                          "Ксения Наныкина", "ОКТЯБРЬ", self.PAY)
+            self.assertIn(f"контент-план выполнен: {word}", t)
+
+    def test_premii_bloka_2(self):
+        from zp_text import build_smm
+        t = build_smm(self._sheet(leads=20000, reels=2500), "Ксения Наныкина",
+                      "ОКТЯБРЬ", self.PAY)
+        self.assertIn("новые клиенты из соцсетей", t)
+        self.assertIn("залетевшие Reels", t)
+
+    def test_dop_premiya_s_kommentariem(self):
+        from zp_text import build_smm
+        t = build_smm(self._sheet(extra=3000, note="за съёмку с шефом"),
+                      "Ксения Наныкина", "ОКТЯБРЬ", self.PAY)
+        self.assertIn("за съёмку с шефом", t)

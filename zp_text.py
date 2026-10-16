@@ -176,6 +176,7 @@ class Sheet:
         "менеджеры сопровождения": "сопровождение",
         "роп": "роп",
         "помощник": "помощник",
+        "smm": "smm",
     }
 
     def staff(self):
@@ -468,6 +469,44 @@ def build_helper(sh, name, month, pay):
     return finish(out, total, name, pay)
 
 
+def build_smm(sh, name, month, pay):
+    """SMM: оклад за ведение аккаунтов + премии за контент-план, клиентов и Reels.
+
+    ★16.10.2026 — Ксения перешла с поиска на SMM. Оклад аккаунта 1 растёт с
+    числом живых подписчиков, поэтому его показываем с расшифровкой из примечания.
+    """
+    block, total = sh.block(name)
+    # row() отдаёт (C, D, E, подпись из B): подписчики и число каналов живут в D
+    pay1, _, _, _ = sh.row(block, "Оклад — аккаунт 1")
+    pay2, _, _, _ = sh.row(block, "Оклад — аккаунт 2")
+    _, subs1, _, _ = sh.row(block, "Живых подписчиков")
+    plan, channels, _, _ = sh.row(block, "Контент-план")
+    leads, _, _, _ = sh.row(block, "Премия за новых клиентов")
+    reels, _, _, _ = sh.row(block, "Премия за залетевшие")
+    extra, _, extra_e, _ = sh.row(block, "Дополнительная премия")
+    note = sh.note(block, "Комментарий к доп.премии")
+    extra = extra or extra_e
+
+    out = [f"⭕️ЗП {SHORT.get(name, name.split()[0])} ЗА {month} ⭕️"]
+    if pay1:
+        подп = f" ({int(subs1)} подписчиков)" if subs1 else ""
+        out.append(line("+", pay1, f"ведение Instagram Greench{подп}"))
+    if pay2:
+        out.append(line("+", pay2, "ведение второго аккаунта"))
+    if plan:
+        cnt = int(channels) if channels else 0
+        word = "канал" if cnt % 10 == 1 and cnt % 100 != 11 else (
+            "канала" if cnt % 10 in (2, 3, 4) and cnt % 100 not in (12, 13, 14) else "каналов")
+        out.append(line("+", plan, f"контент-план выполнен: {cnt} {word}"))
+    if leads:
+        out.append(line("+", leads, "новые клиенты из соцсетей"))
+    if reels:
+        out.append(line("+", reels, "залетевшие Reels"))
+    if extra:
+        out.append(line("+", extra, note.strip() or "премия"))
+    return finish(out, total, name, pay)
+
+
 def finish(out, total, name, pay):
     """Хвост сообщения: авансы, ИТОГ и пометка про официальную часть.
 
@@ -557,6 +596,8 @@ def build_texts(ss=None):
             texts[name] = build_rop(sh, name, month, pay, plans)
         elif role == "помощник":
             texts[name] = build_helper(sh, name, month, pay)
+        elif role == "smm":
+            texts[name] = build_smm(sh, name, month, pay)
         else:
             logger.warning("не знаю, как считать %r (секция %r) — пропускаю", name, role)
     return texts
