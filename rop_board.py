@@ -333,6 +333,26 @@ def save_cache(cache):
         logger.warning("Не смог записать кеш %s", CACHE_PATH)
 
 
+def board_models(model=None):
+    """Модели для разбора статусов: основная и запасные других вендоров.
+
+    ★15.10.2026. Раньше модель была одна: отключили бы её — и борд навсегда
+    остался бы со статусами по стадиям, без причин и действий, молча. Запасные
+    намеренно у других вендоров, чтобы один отказ не уносил всю цепочку.
+    """
+    if model:
+        return [model]
+    chain = os.environ.get("BOARD_LLM_MODELS", "")
+    if chain.strip():
+        return [m.strip() for m in chain.split(",") if m.strip()]
+    # последняя ступень — «:free»: цена 0, значит работает и когда на
+    # OpenRouter кончились деньги. Разбор похуже, но он есть.
+    return [os.environ.get("BOARD_LLM_MODEL", "anthropic/claude-haiku-4.5"),
+            "google/gemini-2.5-flash-lite",
+            "deepseek/deepseek-chat-v3.1",
+            "nvidia/nemotron-3.5-lightning:free"]
+
+
 def llm_classify(items, model=None):
     """items: [{id, stage, note}] → {id: {status, action}}. Ошибка не критична."""
     key = os.environ.get("OPENROUTER_API_KEY")
@@ -340,36 +360,48 @@ def llm_classify(items, model=None):
         if not key:
             logger.warning("OPENROUTER_API_KEY нет — статусы только по стадиям")
         return {}
-    model = model or os.environ.get("BOARD_LLM_MODEL", "anthropic/claude-haiku-4.5")
+    models = board_models(model)
     base = os.environ.get("OPENROUTER_BASE", "https://openrouter.ai/api/v1")
     out = {}
+    # модель, которая уже ответила, используется и дальше: долбиться мёртвой
+    # на каждой партии незачем
+    working = None
     for i in range(0, len(items), 20):
         chunk = items[i:i + 20]
-        payload = {
-            "model": model,
-            "temperature": 0,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(chunk, ensure_ascii=False)},
-            ],
-        }
-        try:
-            r = requests.post(f"{base}/chat/completions", timeout=120,
-                              headers={"Authorization": f"Bearer {key}",
-                                       "Content-Type": "application/json"},
-                              json=payload)
-            r.raise_for_status()
-            text = r.json()["choices"][0]["message"]["content"]
-            m = re.search(r"\{.*\}", text, re.S)
-            parsed = json.loads(m.group(0) if m else text)
+        for candidate in ([working] if working else models):
+            payload = {
+                "model": candidate,
+                "temperature": 0,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": json.dumps(chunk, ensure_ascii=False)},
+                ],
+            }
+            try:
+                r = requests.post(f"{base}/chat/completions", timeout=120,
+                                  headers={"Authorization": f"Bearer {key}",
+                                           "Content-Type": "application/json"},
+                                  json=payload)
+                r.raise_for_status()
+                text = r.json()["choices"][0]["message"]["content"]
+                m = re.search(r"\{.*\}", text, re.S)
+                parsed = json.loads(m.group(0) if m else text)
+            except Exception as exc:
+                logger.warning("LLM-разбор партии %d моделью %s не удался: %s",
+                               i // 20 + 1, candidate, exc)
+                continue
             for k, v in parsed.items():
                 status = str(v.get("status", "")).strip()
                 action = str(v.get("action", "")).strip()
                 if status in STATUS_TITLES:
                     out[str(k)] = {"status": status, "action": action[:120]}
-        except Exception as exc:
-            logger.warning("LLM-разбор партии %d не удался: %s", i // 20 + 1, exc)
-    logger.info("LLM разобрал %d карточек из %d", len(out), len(items))
+            if working is None and candidate != models[0]:
+                logger.warning("основная модель %s не ответила — разбирает запасная %s",
+                               models[0], candidate)
+            working = candidate
+            break
+    logger.info("LLM разобрал %d карточек из %d (модель %s)",
+                len(out), len(items), working or "—")
     return out
 
 
