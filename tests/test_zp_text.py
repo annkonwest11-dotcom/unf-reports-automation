@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from zp_text import bonus_rate, finish
+from zp_text import Sheet, bonus_rate, finish
 
 PROMISE = "официальная зарплата — добавим 10-го"
 
@@ -77,3 +77,54 @@ class TestBonusRate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStaffFromSheet(unittest.TestCase):
+    """Состав сотрудников берётся из листа: наём и увольнение не правят код.
+
+    Со списком в коде рассылка падала целиком: после увольнения Лилии
+    build_texts бросал «не нашёл ИТОГО ЗП — Лилия Сулименко» и не собирал
+    вообще ничего, в том числе по оставшимся.
+    """
+
+    def _sheet(self, rows):
+        return Sheet([[c for c in r] for r in rows])
+
+    def test_roli_po_sekciyam(self):
+        sh = self._sheet([
+            ["СВОДНАЯ ЗАРПЛАТНАЯ ВЕДОМОСТЬ"],
+            ["МЕНЕДЖЕРЫ ПОИСКА"],
+            ["ИТОГО ЗП — Дарья Вольнова", "", 1000],
+            ["ИТОГО ЗП — Виолетта Караханова", "", 2000],
+            ["МЕНЕДЖЕРЫ СОПРОВОЖДЕНИЯ"],
+            ["ИТОГО ЗП — Алена Черкашина", "", 3000],
+            ["РОП"],
+            ["ИТОГО ЗП — Анна Кононенко (РОП)", "", 4000],
+        ])
+        self.assertEqual(sh.staff(), [
+            ("Дарья Вольнова", "поиск"),
+            ("Виолетта Караханова", "поиск"),
+            ("Алена Черкашина", "сопровождение"),
+            ("Анна Кононенко (РОП)", "роп"),
+        ])
+
+    def test_uvolennogo_net_v_sostave(self):
+        sh = self._sheet([
+            ["СВОДНАЯ ЗАРПЛАТНАЯ ВЕДОМОСТЬ"],
+            ["МЕНЕДЖЕРЫ ПОИСКА"],
+            ["ИТОГО ЗП — Дарья Вольнова", "", 1000],
+        ])
+        names = [n for n, _ in sh.staff()]
+        self.assertNotIn("Лилия Сулименко", names)
+        self.assertEqual(names, ["Дарья Вольнова"])
+
+    def test_dashbord_sverhu_ne_schitaetsya(self):
+        # вверху листа те же имена в сводке — состав берём только из ведомости
+        sh = self._sheet([
+            ["Дарья Вольнова", "", 1000],
+            ["Алена Черкашина", "", 2000],
+            ["СВОДНАЯ ЗАРПЛАТНАЯ ВЕДОМОСТЬ"],
+            ["МЕНЕДЖЕРЫ ПОИСКА"],
+            ["ИТОГО ЗП — Дарья Вольнова", "", 1000],
+        ])
+        self.assertEqual(sh.staff(), [("Дарья Вольнова", "поиск")])

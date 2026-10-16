@@ -68,6 +68,18 @@ def plan_summary(ws, who: str) -> dict:
 
     dash_row = next((i for i, a in col_a
                      if norm(a) == want and ledger_start and i < ledger_start), None)
+    # Заголовок секции В ДАШБОРДЕ («ПОМОЩНИК» над строкой человека): если он там
+    # один, после удаления остаётся пустая подпись — её тоже убираем.
+    dash_section = None
+    if dash_row:
+        prev = next((i for i, a in reversed(col_a) if i < dash_row and a.strip()), None)
+        if prev and col_a[prev - 1][1].strip().upper() in SECTION_TITLES:
+            nxt = next((i for i, a in col_a
+                        if i > dash_row and a.strip()
+                        and (a.strip().upper() in SECTION_TITLES
+                             or a.strip().upper().startswith("ИТОГО"))), None)
+            if nxt == dash_row + 1 or nxt is None:
+                dash_section = prev
     pay_row = next((i for i, a in col_a
                     if norm(a) == want and payments_start and i > payments_start), None)
     itogo_row = next((i for i, a in col_a
@@ -101,9 +113,9 @@ def plan_summary(ws, who: str) -> dict:
 
     # строки дашборда остальных сотрудников ссылаются на ИТОГО блоков — после
     # удаления Sheets поправит их сам, поэтому их не трогаем
-    return {"dash_row": dash_row, "pay_row": pay_row, "head_row": head_row,
-            "itogo_row": itogo_row, "section_row": section_row, "fot_row": fot_row,
-            "itogo_keep": keep, "payments_start": payments_start}
+    return {"dash_row": dash_row, "dash_section": dash_section, "pay_row": pay_row,
+            "head_row": head_row, "itogo_row": itogo_row, "section_row": section_row,
+            "fot_row": fot_row, "itogo_keep": keep, "payments_start": payments_start}
 
 
 def plan_shifts(sh, who: str) -> dict:
@@ -157,6 +169,7 @@ def main():
     print(f"УБИРАЕМ: {args.who}   (расчётный период в таблице: {period})")
     print("\nСВОДНАЯ_ЗП:")
     print(f"  строка дашборда:      {p['dash_row'] or '— не найдена'}")
+    print(f"  секция в дашборде:    {p['dash_section'] or '— остаётся'}")
     print(f"  блок:                 {p['head_row']}–{p['itogo_row']}"
           if p["head_row"] else "  блок:                 — не найден")
     print(f"  заголовок секции:     {p['section_row'] or '— остаётся (в секции есть другие)'}")
@@ -184,7 +197,9 @@ def main():
 
     # Удаляем сверху вниз по убыванию номеров, иначе строки уедут под ногами.
     to_delete = sorted({p["pay_row"], *range(p["head_row"], p["itogo_row"] + 1),
-                        p["dash_row"], *( [p["section_row"]] if p["section_row"] else [])},
+                        p["dash_row"],
+                        *([p["section_row"]] if p["section_row"] else []),
+                        *([p["dash_section"]] if p["dash_section"] else [])},
                        reverse=True)
     for row in to_delete:
         sv.delete_rows(row)

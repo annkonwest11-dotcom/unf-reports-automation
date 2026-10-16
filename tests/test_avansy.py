@@ -37,7 +37,7 @@ class TestSurnameMatch(unittest.TestCase):
         self.assertEqual(sa._match_surname("Вольнова Дарья Павловна"), "Вольнова")
         self.assertEqual(sa._match_surname("Наныкина Ксения Сергеевна"), "Наныкина")
         self.assertEqual(sa._match_surname("Черкашина Алена Анатольевна"), "Черкашина")
-        self.assertEqual(sa._match_surname("Герасимчук Владислава Павловна"), "Герасимчук")
+        self.assertEqual(sa._match_surname("Хакимова София Руслановна"), "Хакимова")
 
     def test_ignores_other_office_staff(self):
         # чужие сотрудники в тот же день с той же категорией — не наши
@@ -74,12 +74,25 @@ class TestFetchAndSync(unittest.TestCase):
         self.assertEqual(rep["col"], "C")
         # строки берутся из ведомости по ФИО: Дарья 141, Ксения 142, Алёна 145, Влада 146
         cells = {it["cell"]: it["amount"] for it in rep["items"]}
-        self.assertEqual(cells, {"C141": 12253, "C142": 12253,
-                                 "C145": 12253, "C146": 12253})
+        # строки берутся по ФИО: Дарья 141, Ксения 142, Алёна 145
+        self.assertEqual(cells, {"C141": 12253, "C142": 12253, "C145": 12253})
         # стажёрам официальную ЗП ещё не платят — они честно попадают в «не выплачено»
         self.assertEqual(rep["missing"], ["София Хакимова", "Виолетта Караханова"])
-        # Лилия уволена: выплата в кассе есть, а строки в ведомости нет — не пишем
-        self.assertEqual(rep["gone"], ["Лилия Сулименко"])
+        # уволенных в справочнике больше нет, значит и «писать некуда» не про них
+        self.assertEqual(rep["gone"], [])
+
+    def test_uvolennyy_v_vedomosti_otsutstvuet(self):
+        # выплата в кассе есть, а строки в ведомости нет → не пишем, помечаем gone
+        self._install([
+            _tx("Черкашина Алена Анатольевна", "12253.78", "2026-07-24",
+                "Заработная плата за первую половину месяца"),
+        ])
+        ledger = {10: "ТАБЛИЦА ВЫПЛАТ ЗА МЕСЯЦ", 11: "Сотрудник",
+                  12: "Дарья Вольнова", 13: "ИТОГО"}
+        rep = sa.sync_avansy("avans", today=__import__("datetime").datetime(2026, 7, 24),
+                             apply=True, ws=FakeWS(ledger=ledger))
+        self.assertEqual(rep["items"], [])
+        self.assertIn("Алёна Черкашина", rep["gone"])
 
     def test_zp_uses_second_half_and_col_E(self):
         self._install([
@@ -91,9 +104,9 @@ class TestFetchAndSync(unittest.TestCase):
         self.assertEqual(rep["col"], "E")
         cells = {it["cell"]: it["amount"] for it in rep["items"]}
         self.assertEqual(cells, {"E141": 14640, "E145": 14640})
-        # Ксения и Владислава не выплачены → в missing
+        # Ксения и стажёры не выплачены → в missing
         self.assertIn("Ксения Наныкина", rep["missing"])
-        self.assertIn("Владислава Герасимчук", rep["missing"])
+        self.assertIn("София Хакимова", rep["missing"])
 
     def test_multiple_ops_summed(self):
         self._install([

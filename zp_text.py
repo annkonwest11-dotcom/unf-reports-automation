@@ -171,6 +171,32 @@ class Sheet:
             return ""
         return r[8][Sheet.NOTE_COL]
 
+    SECTION_ROLES = {
+        "менеджеры поиска": "поиск",
+        "менеджеры сопровождения": "сопровождение",
+        "роп": "роп",
+        "помощник": "помощник",
+    }
+
+    def staff(self):
+        """[(ФИО, роль)] по ведомости листа: роль — из заголовка секции.
+
+        Имена берём из строк «ИТОГО ЗП — …», порядок сохраняем листовой. Так
+        наём и увольнение не требуют правок в коде: кто есть в СВОДНОЙ, тот и
+        попадает в рассылку.
+        """
+        out, role = [], None
+        start = self.find("СВОДНАЯ ЗАРПЛАТНАЯ ВЕДОМОСТЬ")
+        for i in range(max(start, 0), len(self.grid)):
+            a = str(self.grid[i][0]).strip()
+            low = a.lower()
+            if low in self.SECTION_ROLES:
+                role = self.SECTION_ROLES[low]
+                continue
+            if a.startswith("ИТОГО ЗП —"):
+                out.append((a.split("—", 1)[1].strip(), role))
+        return out
+
     def payments(self):
         """{ФИО: (итого, аванс_карта, аванс_нал, зп_карта, остаток_нал)}."""
         start = self.find("ТАБЛИЦА ВЫПЛАТ")
@@ -513,16 +539,26 @@ def build_texts(ss=None):
              "post": setting("РОП", "Оплаты (план)")}
 
     texts = {}
-    for name in ("Дарья Вольнова", "Ксения Наныкина", "Лилия Сулименко"):
-        texts[name] = build_search(sh, name, month, facts, pay, plans["search"])
-    # Стажёры: у каждой свой план в НАСТРОЙКАХ (первый месяц — 50% от общего).
-    for name in ("София Хакимова", "Виолетта Караханова"):
-        texts[name] = build_search(sh, name, month, facts, pay,
-                                   setting(name, "Оборот новых клиентов") or plans["search"])
-    texts["Алена Черкашина"] = build_support(sh, "Алена Черкашина", month, facts, pay,
-                                             plans["alena"])
-    texts["Анна Кононенко (РОП)"] = build_rop(sh, "Анна Кононенко (РОП)", month, pay, plans)
-    texts["Владислава Герасимчук"] = build_helper(sh, "Владислава Герасимчук", month, pay)
+    # ★16.10.2026: состав берём ИЗ ЛИСТА, а не списком в коде. Со списком каждое
+    # кадровое изменение ломало рассылку целиком: после увольнения Лилии
+    # build_texts падал с «не нашёл ИТОГО ЗП — Лилия Сулименко» и не собирал
+    # вообще ничего, в том числе по оставшимся.
+    for name, role in sh.staff():
+        if role == "поиск":
+            # у стажёра свой план в НАСТРОЙКАХ (первый месяц — 50% от общего)
+            texts[name] = build_search(sh, name, month, facts, pay,
+                                       setting(name, "Оборот новых клиентов")
+                                       or plans["search"])
+        elif role == "сопровождение":
+            texts[name] = build_support(sh, name, month, facts, pay,
+                                        setting(name, "Оплаты ресторанов")
+                                        or plans["alena"])
+        elif role == "роп":
+            texts[name] = build_rop(sh, name, month, pay, plans)
+        elif role == "помощник":
+            texts[name] = build_helper(sh, name, month, pay)
+        else:
+            logger.warning("не знаю, как считать %r (секция %r) — пропускаю", name, role)
     return texts
 
 

@@ -8,6 +8,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import sheets as sheets_module
 from parser import parse_report
 from sheets import (
     SheetsClient,
@@ -261,3 +262,52 @@ class TestDayParsing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestShiftRanges(unittest.TestCase):
+    """Диапазоны дней листа смен — по подписям секций, а не по номерам строк.
+
+    Номера уезжают при каждом кадровом изменении: после увольнения Лилии и Влады
+    основные смены стали 5-10, подработки 15-16 (были 5-12 и 17-19). На этих
+    границах держатся чистка листа при закрытии месяца и промоут СМЕНЫ_СЛЕД.
+    """
+
+    class _WS:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def get_all_values(self):
+            return [r[:] for r in self._rows]
+
+    def _client(self):
+        return SheetsClient.__new__(SheetsClient)
+
+    def _rows(self, main, extra):
+        out = [["СМЕНЫ — Учёт рабочих дней", "", "", ""], ["Октябрь 2026", "", "", ""],
+               ["ОСНОВНЫЕ СМЕНЫ", "", "", ""], ["№", "Сотрудник", "Отдел", "Ставка"]]
+        for i, name in enumerate(main, 1):
+            out.append([str(i), name, "Отдел продаж", "2500"])
+        out += [["", "", "", ""], ["ПОДРАБОТКИ (выходные смены)", "", "", ""],
+                ["№", "", "", ""]]
+        for i, name in enumerate(extra, 1):
+            out.append([str(i), name, "Отдел продаж", ""])
+        return out
+
+    def test_posle_uvolneniy(self):
+        rows = self._rows(["Дарья", "Ксения", "София", "Виолетта", "Алена", "Анна"],
+                          ["Алена", "Анна"])
+        a1, bounds = self._client()._shift_ranges(self._WS(rows))
+        self.assertEqual(a1, ["E5:AI10", "E14:AI15"])
+        self.assertEqual(bounds, [(4, 10), (13, 15)])
+
+    def test_dobavili_cheloveka(self):
+        rows = self._rows(["Дарья", "Ксения", "София", "Виолетта", "Алена", "Анна", "Новый"],
+                          ["Алена", "Анна"])
+        a1, _ = self._client()._shift_ranges(self._WS(rows))
+        self.assertEqual(a1[0], "E5:AI11")
+
+    def test_bez_podpisey_zapasnye(self):
+        # лист без секций — отдаём запасные диапазоны, а не пустую чистку
+        a1, bounds = self._client()._shift_ranges(self._WS([["что-то", "", "", ""]]))
+        self.assertEqual(a1, list(sheets_module._SHIFT_DAY_RANGES))
+        self.assertEqual(bounds, [(4, 12), (16, 19)])
