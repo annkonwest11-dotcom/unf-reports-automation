@@ -69,24 +69,28 @@ class TestFetchAndSync(unittest.TestCase):
             _tx("Вдовина Ирина Александровна", "12253.78", "2026-07-24", "Заработная плата за первую половину месяца"),
             _tx("Вольнова Дарья Павловна", "111", "2026-06-24", "Заработная плата за первую половину месяца"),
         ])
-        rep = sa.sync_avansy("avans", today=__import__("datetime").datetime(2026, 7, 24), apply=False)
+        rep = sa.sync_avansy("avans", today=__import__("datetime").datetime(2026, 7, 24),
+                             apply=False, ws=FakeWS())
         self.assertEqual(rep["col"], "C")
-        self.assertEqual(len(rep["items"]), 5)
+        # строки берутся из ведомости по ФИО: Дарья 141, Ксения 142, Алёна 145, Влада 146
         cells = {it["cell"]: it["amount"] for it in rep["items"]}
-        self.assertEqual(cells, {"C154": 12253, "C155": 12253, "C156": 12253,
-                                 "C159": 12253, "C160": 12253})
+        self.assertEqual(cells, {"C141": 12253, "C142": 12253,
+                                 "C145": 12253, "C146": 12253})
         # стажёрам официальную ЗП ещё не платят — они честно попадают в «не выплачено»
         self.assertEqual(rep["missing"], ["София Хакимова", "Виолетта Караханова"])
+        # Лилия уволена: выплата в кассе есть, а строки в ведомости нет — не пишем
+        self.assertEqual(rep["gone"], ["Лилия Сулименко"])
 
     def test_zp_uses_second_half_and_col_E(self):
         self._install([
             _tx("Вольнова Дарья Павловна", "14640.57", "2026-08-10", "Заработная плата за вторую половину месяца"),
             _tx("Черкашина Алена Анатольевна", "14640.57", "2026-08-08", "Заработная плата за вторую половину месяца"),
         ])
-        rep = sa.sync_avansy("zp", today=__import__("datetime").datetime(2026, 8, 10), apply=False)
+        rep = sa.sync_avansy("zp", today=__import__("datetime").datetime(2026, 8, 10),
+                             apply=False, ws=FakeWS())
         self.assertEqual(rep["col"], "E")
         cells = {it["cell"]: it["amount"] for it in rep["items"]}
-        self.assertEqual(cells, {"E154": 14640, "E159": 14640})
+        self.assertEqual(cells, {"E141": 14640, "E145": 14640})
         # Ксения и Владислава не выплачены → в missing
         self.assertIn("Ксения Наныкина", rep["missing"])
         self.assertIn("Владислава Герасимчук", rep["missing"])
@@ -108,10 +112,27 @@ class TestFetchAndSync(unittest.TestCase):
 
 
 class FakeWS:
-    """Мок листа: current — {cell: значение}; фиксирует записи в self.written."""
-    def __init__(self, current=None):
+    """Мок листа: current — {cell: значение}; фиксирует записи в self.written.
+
+    Колонка A повторяет ведомость: после удаления Лилии строки сотрудников
+    уехали на 141-147 — ровно тот случай, из-за которого номера строк больше не
+    хранятся в коде, а ищутся по ФИО.
+    """
+
+    LEDGER = {139: "ТАБЛИЦА ВЫПЛАТ ЗА МЕСЯЦ", 140: "Сотрудник",
+              141: "Дарья Вольнова", 142: "Ксения Наныкина",
+              143: "София Хакимова", 144: "Виолетта Караханова",
+              145: "Алена Черкашина", 146: "Владислава Герасимчук",
+              147: "Анна Кононенко (РОП)", 148: "ИТОГО"}
+
+    def __init__(self, current=None, ledger=None):
         self._current = current or {}
+        self._ledger = ledger if ledger is not None else self.LEDGER
         self.written = []
+
+    def get(self, rng, value_render_option=None):
+        last = max(self._ledger) if self._ledger else 0
+        return [[self._ledger.get(i, "")] for i in range(1, last + 1)]
 
     def batch_get(self, ranges, value_render_option=None):
         out = []
@@ -141,25 +162,53 @@ class TestOnlyChanged(unittest.TestCase):
             _tx("Вольнова Дарья Павловна", "12253.78", "2026-07-24", "первую половину месяца"),
             _tx("Наныкина Ксения Сергеевна", "12253.78", "2026-07-24", "первую половину месяца"),
         ])
-        # Дарья уже стоит в C154 той же суммой → не меняется; Ксения C155 пусто → новая
-        ws = FakeWS(current={"C154": 12253, "C155": None, "C159": None, "C160": None})
+        # Дарья уже стоит в C141 той же суммой → не меняется; Ксения C142 пусто → новая
+        ws = FakeWS(current={"C141": 12253, "C142": None, "C145": None, "C146": None})
         rep = sa.sync_avansy("avans", today=_dt.datetime(2026, 7, 24),
                              apply=True, only_changed=True, ws=ws)
         changed_cells = {it["cell"] for it in rep["changed"]}
-        self.assertEqual(changed_cells, {"C155"})           # только Ксения
-        self.assertEqual(ws.written, [("C155", 12253)])  # записана только она
+        self.assertEqual(changed_cells, {"C142"})           # только Ксения
+        self.assertEqual(ws.written, [("C142", 12253)])  # записана только она
 
     def test_changed_when_amount_differs(self):
         import datetime as _dt
         self._install([
             _tx("Вольнова Дарья Павловна", "13000", "2026-07-25", "первую половину месяца"),
         ])
-        ws = FakeWS(current={"C154": 12253, "C155": None, "C159": None, "C160": None})
+        ws = FakeWS(current={"C141": 12253, "C142": None, "C145": None, "C146": None})
         rep = sa.sync_avansy("avans", today=_dt.datetime(2026, 7, 25),
                              apply=True, only_changed=True, ws=ws)
-        self.assertEqual([it["cell"] for it in rep["changed"]], ["C154"])
-        self.assertEqual(ws.written, [("C154", 13000.0)])
+        self.assertEqual([it["cell"] for it in rep["changed"]], ["C141"])
+        self.assertEqual(ws.written, [("C141", 13000.0)])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPaymentRows(unittest.TestCase):
+    """Строки ведомости ищутся по ФИО — номера уезжают при каждом увольнении."""
+
+    def test_nahodit_po_fio(self):
+        rows = sa.payment_rows(FakeWS())
+        self.assertEqual(rows["Вольнова"], 141)
+        self.assertEqual(rows["Черкашина"], 145)      # «Алена» без ё — тоже она
+        self.assertNotIn("Сулименко", rows)           # уволена, строки нет
+
+    def test_sdvig_vedomosti_ne_lomaet(self):
+        # ведомость уехала вверх (удалили ещё и помощника) — ищем всё равно верно
+        ledger = {100: "ТАБЛИЦА ВЫПЛАТ ЗА МЕСЯЦ", 101: "Сотрудник",
+                  102: "Дарья Вольнова", 103: "Алена Черкашина", 104: "ИТОГО"}
+        rows = sa.payment_rows(FakeWS(ledger=ledger))
+        self.assertEqual(rows, {"Вольнова": 102, "Черкашина": 103})
+
+    def test_itogo_ostanavlivaet_poisk(self):
+        # ниже строки ИТОГО бывают тёзки в примечаниях — туда не заглядываем
+        ledger = {10: "ТАБЛИЦА ВЫПЛАТ ЗА МЕСЯЦ", 11: "Сотрудник",
+                  12: "Дарья Вольнова", 13: "ИТОГО", 14: "Ксения Наныкина"}
+        rows = sa.payment_rows(FakeWS(ledger=ledger))
+        self.assertEqual(rows, {"Вольнова": 12})
+
+    def test_bez_vedomosti_pusto(self):
+        rows = sa.payment_rows(FakeWS(ledger={1: "СВОДНАЯ", 2: "Смены"}))
+        self.assertEqual(rows, {})

@@ -39,16 +39,50 @@ logger = logging.getLogger(__name__)
 
 _TYPE_EXPENSE = 2  # 2 = расход/выплата
 
-# фамилия-ключ (в contractor) → (строка в СВОДНАЯ_ЗП, отображаемое имя)
+# фамилия-ключ (в contractor) → отображаемое имя в ведомости.
+# ★15.10.2026: номера строк отсюда УБРАНЫ. Раньше тут стояло (154, «Дарья
+# Вольнова») и так далее, а строки таблицы выплат уезжают при каждом кадровом
+# изменении: после удаления Лилии ведомость уехала с 154-161 на 141-147, и
+# авансы записались бы в пустые строки НИЖЕ таблицы — мимо расчёта и молча.
+# Теперь строку ищем по ФИО (payment_rows), как это делает zp_text.
 EMPLOYEES = {
-    "Вольнова":   (154, "Дарья Вольнова"),
-    "Наныкина":   (155, "Ксения Наныкина"),
-    "Сулименко":  (156, "Лилия Сулименко"),
-    "Хакимова":   (157, "София Хакимова"),
-    "Караханова": (158, "Виолетта Караханова"),
-    "Черкашина":  (159, "Алёна Черкашина"),
-    "Герасимчук": (160, "Владислава Герасимчук"),
+    "Вольнова":   "Дарья Вольнова",
+    "Наныкина":   "Ксения Наныкина",
+    "Сулименко":  "Лилия Сулименко",
+    "Хакимова":   "София Хакимова",
+    "Караханова": "Виолетта Караханова",
+    "Черкашина":  "Алёна Черкашина",
+    "Герасимчук": "Владислава Герасимчук",
 }
+
+
+def _norm(s):
+    """«Алена»/«Алёна», регистр и лишние пробелы — одно имя."""
+    return " ".join(str(s or "").replace("ё", "е").lower().split())
+
+
+def payment_rows(ws):
+    """{фамилия: номер строки} по ТАБЛИЦЕ ВЫПЛАТ листа СВОДНАЯ_ЗП.
+
+    Ищем строки по ФИО: кадровые изменения двигают ведомость, а подписи — нет.
+    Кого в ведомости нет (уволился), в результат не попадает — писать ему некуда.
+    """
+    rows = ws.get("A1:A200", value_render_option="UNFORMATTED_VALUE")
+    names = [(i + 1, str(r[0]).strip() if r else "") for i, r in enumerate(rows)]
+    start = next((i for i, a in names if "ТАБЛИЦА ВЫПЛАТ" in a.upper()), None)
+    if start is None:
+        logger.warning("в %s нет строки «ТАБЛИЦА ВЫПЛАТ» — писать некуда", SHEET_NAME)
+        return {}
+    out = {}
+    for i, a in names:
+        if i <= start or not a:
+            continue
+        if a.upper().startswith("ИТОГО"):
+            break
+        for surname, full in EMPLOYEES.items():
+            if _norm(full) == _norm(a) or _norm(surname) in _norm(a):
+                out[surname] = i
+    return out
 
 # тип выплаты → колонка таблицы выплат
 KIND_COL = {
@@ -96,7 +130,7 @@ def fetch_payouts(kind, today=None, token=None, ym=None):
     следующего месяца) — чтобы выплата попадала в свою ведомость независимо от даты
     закрытия месяца.
 
-    Возвращает dict: surname → {"amount": float, "name": str, "row": int,
+    Возвращает dict: surname → {"amount": float, "name": str,
     "date": "DD.MM", "count": int}. Если у сотрудника несколько операций
     этого типа за месяц — суммирует (доплаты), дата = последней операции.
     """
@@ -116,7 +150,7 @@ def fetch_payouts(kind, today=None, token=None, ym=None):
         surname = _match_surname(_contractor_name(t))
         if not surname:
             continue
-        row, name = EMPLOYEES[surname]
+        name = EMPLOYEES[surname]
         amt = float(t.get("amount", 0) or 0)
         cur = result.get(surname)
         ddmm = f"{di[8:10]}.{di[5:7]}"
@@ -127,7 +161,7 @@ def fetch_payouts(kind, today=None, token=None, ym=None):
                 cur["date"], cur["_di"] = ddmm, di
         else:
             result[surname] = {"amount": round(amt, 2), "name": name,
-                               "row": row, "date": ddmm, "_di": di, "count": 1}
+                               "date": ddmm, "_di": di, "count": 1}
     for v in result.values():
         v.pop("_di", None)
     logger.info("Касса, выплаты (%s) за %s: %d сотрудников", kind, ym, len(result))
@@ -163,10 +197,10 @@ def _open_summary_ws():
     return sh.worksheet(SHEET_NAME)
 
 
-def _read_current(ws, col):
-    """Текущие значения целевых ячеек колонки col для 4 сотрудников.
+def _read_current(ws, col, rows):
+    """Текущие значения целевых ячеек колонки col по строкам сотрудников.
     Возвращает {cell: float|None} (None = пусто/нечисло)."""
-    cells = [f"{col}{row}" for row, _ in EMPLOYEES.values()]
+    cells = [f"{col}{row}" for row in sorted(rows.values())]
     got = ws.batch_get(cells, value_render_option="UNFORMATTED_VALUE")
     current = {}
     for cell, block in zip(cells, got):
@@ -212,12 +246,20 @@ def sync_avansy(kind, today=None, apply=True, token=None, ws=None,
             logger.exception("Период B4 не прочитан — беру календарный месяц")
 
     payouts = fetch_payouts(kind, today=today, token=token, ym=ym)
-    current = _read_current(ws, col) if (only_changed and ws) else {}
+    ws = ws or _open_summary_ws()
+    rows = payment_rows(ws)
+    current = _read_current(ws, col, rows) if only_changed else {}
 
     items, changed, updates = [], [], []
-    for surname, (row, name) in EMPLOYEES.items():
+    for surname, name in EMPLOYEES.items():
         p = payouts.get(surname)
         if not p:
+            continue
+        row = rows.get(surname)
+        if row is None:
+            # в ведомости его больше нет (уволился) — а деньги в кассе есть
+            logger.warning("%s: выплата в кассе есть, а строки в ведомости нет —"
+                           " не записываю", name)
             continue
         cell = f"{col}{row}"
         # официальный аванс/ЗП в ведомость — без копеек (Анна: копейки отсекаем,
@@ -233,18 +275,19 @@ def sync_avansy(kind, today=None, apply=True, token=None, ws=None,
         if not only_changed or is_changed:
             updates.append({"range": cell, "values": [[val]]})
 
-    missing = [name for surname, (row, name) in EMPLOYEES.items()
-               if surname not in payouts]
+    missing = [name for surname, name in EMPLOYEES.items()
+               if surname not in payouts and surname in rows]
+    # кого нет в ведомости — отдельно: это не «не заплатили», это «уволен»
+    gone = [name for surname, name in EMPLOYEES.items() if surname not in rows]
 
     applied = False
     if apply and updates:
-        ws = ws or _open_summary_ws()
         ws.batch_update(updates, value_input_option="USER_ENTERED")
         applied = True
         logger.info("Записано %d ячеек в %s (%s)", len(updates), SHEET_NAME, col)
 
     return {"kind": kind, "col": col, "items": items, "changed": changed,
-            "missing": missing, "applied": applied}
+            "missing": missing, "gone": gone, "applied": applied}
 
 
 def format_report(rep, only_changed=False):
