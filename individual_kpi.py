@@ -307,6 +307,66 @@ def report_text(res: dict) -> str:
     return "\n".join(lines)
 
 
+# ── запись результата в СВОДНУЮ ──────────────────────────────────────────────
+
+ROW_CALLS = "Звонки — норма"
+ROW_TASTINGS = "Дегустации — норма"
+ROW_BONUS = "Индивидуальный бонус"
+
+
+def summary_cells(res: dict) -> dict[str, str]:
+    """{подпись строки: что в неё писать} — чистая часть записи, без таблицы.
+
+    Строки ищутся ПО ПОДПИСИ: блок сотрудника в СВОДНОЙ переезжает при каждом
+    найме и увольнении, адреса в коде держать нельзя.
+    """
+    mark = lambda ok: "✅ выполнено" if ok else "❌ не выполнено"
+    weeks = " / ".join(str(w["done"]) for w in res["weeks"].values()) or "нет смен"
+    return {
+        ROW_CALLS: f"{res['calls_avg']:.1f} в среднем, минимум {res['calls_min']} "
+                   f"(смен с отчётом {len(res['calls'])}) — {mark(res['calls_ok'])}",
+        ROW_TASTINGS: f"по неделям {weeks} (качественных {res['tastings_quality']} "
+                      f"из {res['tastings_all']}) — {mark(res['tastings_ok'])}",
+        ROW_BONUS: res["amount"],
+    }
+
+
+def write_result(res: dict, ss=None) -> dict:
+    """Пишет факт по нормам (колонка D) и сумму бонуса (колонка C) в блок сотрудника."""
+    from sync_odata import _open_spreadsheet
+    ss = ss or _open_spreadsheet()
+    ws = ss.worksheet("СВОДНАЯ_ЗП")
+    col_a = ws.col_values(1)
+
+    itogo = next((i for i, v in enumerate(col_a, start=1)
+                  if (v or "").strip() == f"ИТОГО ЗП — {res['employee']}"), None)
+    if not itogo:
+        raise RuntimeError(f"не нашёл «ИТОГО ЗП — {res['employee']}» в СВОДНОЙ")
+    rows = {}
+    for label in (ROW_CALLS, ROW_TASTINGS, ROW_BONUS):
+        row = next((i for i, v in enumerate(col_a, start=1)
+                    if (v or "").strip() == label and i < itogo), None)
+        if not row:
+            raise RuntimeError(f"нет строки «{label}» — заведи блок: "
+                               f"scripts/add_individual_conditions.py --who "
+                               f"\"{res['employee']}\" --apply")
+        rows[label] = row
+
+    cells = summary_cells(res)
+    updates = [{"range": f"D{rows[ROW_CALLS]}", "values": [[cells[ROW_CALLS]]]},
+               {"range": f"D{rows[ROW_TASTINGS]}", "values": [[cells[ROW_TASTINGS]]]},
+               {"range": f"C{rows[ROW_BONUS]}", "values": [[cells[ROW_BONUS]]]}]
+    ws.batch_update(updates, value_input_option="USER_ENTERED")
+    ws.insert_note(f"C{rows[ROW_BONUS]}",
+                   f"{res['month']}: оборот {int(res['turnover'])} из {int(res['plan'])}, "
+                   f"ступень {int(res['step_base'])}, "
+                   f"звонки {'да' if res['calls_ok'] else 'нет'}, "
+                   f"дегустации {'да' if res['tastings_ok'] else 'нет'}. "
+                   f"Посчитал individual_kpi.py "
+                   f"{datetime.date.today().strftime('%d.%m.%Y')}")
+    return rows
+
+
 def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     ap = argparse.ArgumentParser()
@@ -323,8 +383,12 @@ def main():
     res = collect(month, args.employee)
     print(report_text(res))
     if args.apply:
-        print("\n⚠️ запись в СВОДНУЮ появится вместе с блоком индивидуальных условий "
-              "(его заводим после закрытия сентября)")
+        if not res["active"]:
+            raise SystemExit(f"{month} вне срока индивидуальных условий "
+                             f"({PERIODS[0]} – {PERIODS[-1]}) — записывать нечего")
+        rows = write_result(res)
+        print(f"\nзаписано в СВОДНУЮ: C{rows[ROW_BONUS]} = {res['amount']}, "
+              f"факт по нормам — D{rows[ROW_CALLS]}, D{rows[ROW_TASTINGS]}")
 
 
 if __name__ == "__main__":

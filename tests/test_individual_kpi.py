@@ -13,6 +13,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import individual_kpi
 from individual_kpi import (bonus_step, calls_norm, individual_bonus,
                             tastings_norm, week_key)
 
@@ -117,3 +118,37 @@ class TestBonusSteps(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSummaryCells(unittest.TestCase):
+    """Что именно уезжает в СВОДНУЮ — без сети."""
+
+    def _res(self, **kw):
+        base = {"employee": "Виолетта Караханова", "month": "Октябрь 2026",
+                "calls_avg": 31.4, "calls_min": 27, "calls": {1: 30, 2: 33},
+                "calls_ok": True, "tastings_quality": 23, "tastings_all": 29,
+                "tastings_ok": False, "amount": 9000,
+                "weeks": {datetime.date(2026, 9, 28): {"done": 6},
+                          datetime.date(2026, 10, 5): {"done": 5}}}
+        base.update(kw)
+        return base
+
+    def test_zvonki_stroka(self):
+        c = individual_kpi.summary_cells(self._res())
+        self.assertEqual(c[individual_kpi.ROW_CALLS],
+                         "31.4 в среднем, минимум 27 (смен с отчётом 2) — ✅ выполнено")
+
+    def test_degustacii_po_nedelyam(self):
+        c = individual_kpi.summary_cells(self._res())
+        self.assertEqual(c[individual_kpi.ROW_TASTINGS],
+                         "по неделям 6 / 5 (качественных 23 из 29) — ❌ не выполнено")
+
+    def test_bonus_chislom(self):
+        c = individual_kpi.summary_cells(self._res(amount=45000))
+        self.assertEqual(c[individual_kpi.ROW_BONUS], 45000)
+
+    def test_bez_smen_ne_padaet(self):
+        c = individual_kpi.summary_cells(self._res(weeks={}, calls={}, calls_avg=0.0,
+                                                   calls_min=0, calls_ok=False, amount=0))
+        self.assertIn("нет смен", c[individual_kpi.ROW_TASTINGS])
+        self.assertIn("❌", c[individual_kpi.ROW_CALLS])
