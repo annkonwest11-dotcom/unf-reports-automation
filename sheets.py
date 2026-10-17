@@ -20,6 +20,12 @@ MSK = timezone(timedelta(hours=3))
 # Осн. смены — строки 5-9 (Дарья/Ксения/Алена/Влада/Анна),
 # подработки — строки 14-16 (Алена/Влада/Анна). Раскладка после удаления
 # Валерии Папоян (2026-08-11); диапазоны покрывают ровно строки сотрудников.
+# Запасные диапазоны дней листа смен (осн. смены / подработки), колонки E:AI.
+# ★16.10.2026: номера строк тут УСТАРЕВАЮТ при каждом кадровом изменении (после
+# увольнения Лилии и Влады осн. смены стали 5-10, подработки 15-16). Поэтому
+# рабочий путь — _shift_ranges(ws): он находит секции по подписям «ОСНОВНЫЕ
+# СМЕНЫ» / «ПОДРАБОТКИ». Эти значения остаются только как подстраховка, если
+# подписи в листе не найдены.
 _SHIFT_DAY_RANGES = ('E5:AI12', 'E17:AI19')
 
 # Ставки смен менеджера сопровождения (★Анна, 15.10.2026): будний день — обычная
@@ -162,7 +168,7 @@ class SheetsClient:
             except gspread.WorksheetNotFound:
                 base = sh.worksheet('СМЕНЫ')
                 nw = sh.duplicate_sheet(base.id, new_sheet_name='СМЕНЫ_СЛЕД')
-                nw.batch_clear(list(_SHIFT_DAY_RANGES))
+                nw.batch_clear(self._shift_ranges(nw)[0])
                 nw.update([[_next_month_label(period)]], 'A2')
                 logger.info("Created СМЕНЫ_СЛЕД for overlap month (%s)", _next_month_label(period))
                 return nw
@@ -189,6 +195,30 @@ class SheetsClient:
             elif result and col_a and not col_a.isdigit():
                 break
         return result
+
+    def _shift_ranges(self, ws) -> tuple[list[str], list[tuple[int, int]]]:
+        """Диапазоны дней листа смен по подписям секций.
+
+        Возвращает (['E5:AI10', 'E15:AI16'], [(4, 10), (14, 16)]): первое — для
+        batch_clear, второе — границы строк в 0-индексации для copyPaste при
+        промоуте СМЕНЫ_СЛЕД → СМЕНЫ. Если подписи не найдены, отдаём запасные
+        _SHIFT_DAY_RANGES — лучше прежнее поведение, чем пустая чистка.
+        """
+        rows = ws.get_all_values()
+        out_a1, out_idx = [], []
+        for keyword in ("основные смены", "подработки"):
+            found = self._section_employee_rows(rows, keyword)
+            if not found:
+                logger.warning("лист смен: секция %r не найдена", keyword)
+                continue
+            first, last = min(found), max(found)
+            out_a1.append(f"E{first}:AI{last}")
+            out_idx.append((first - 1, last))
+        if len(out_a1) != 2:
+            logger.warning("лист смен: секции не разобраны, беру запасные диапазоны %s",
+                           _SHIFT_DAY_RANGES)
+            return list(_SHIFT_DAY_RANGES), [(4, 12), (16, 19)]
+        return out_a1, out_idx
 
     def _find_employee_row(
         self,
@@ -464,6 +494,65 @@ class SheetsClient:
             'подработки': self._section_side_job_stats(all_rows, cols),
         }
 
+    # ── СТАЖЁРСКИЕ СМЕНЫ (ставка 1700 за первые 7 смен ЗА ВСЁ ВРЕМЯ) ────────
+    # В НАСТРОЙКАХ у каждого стажёра строка «<ФИО> — смен отработано в прошлых
+    # месяцах». Формула ставки в СМЕНЫ!D сравнивает её + смены текущего месяца
+    # с лимитом. Счётчик надо наращивать при каждом закрытии месяца, иначе
+    # лимит обнуляется и дешёвые смены начинаются заново.
+    TRAINEE_LABEL = "смен отработано в прошл"
+
+    @staticmethod
+    def _trainee_counters(settings_col_a: list[str]) -> dict[str, int]:
+        """{ФИО: номер строки НАСТРОЕК} по подписям «<ФИО> — смен отработано…»."""
+        out = {}
+        for i, label in enumerate(settings_col_a, start=1):
+            low = (label or "").lower()
+            if SheetsClient.TRAINEE_LABEL not in low:
+                continue
+            name = re.split(r"[—–-]", label, maxsplit=1)[0].strip()
+            if name:
+                out[name] = i
+        return out
+
+    @staticmethod
+    def _shift_counts(smeny_values: list) -> dict[str, int]:
+        """{ФИО: сколько смен проставлено} по строкам листа СМЕНЫ (колонки E:AI)."""
+        out = {}
+        for row in smeny_values:
+            name = (row[1] if len(row) > 1 else "").strip()
+            # строка сотрудника всегда пронумерована в A; у шапки там «№», и без
+            # этой проверки она сама считалась сотрудником с тремя «сменами»
+            num = (row[0] if row else "").strip()
+            if not name or not num.isdigit():
+                continue
+            cells = [c for c in row[4:35] if str(c).strip()]
+            if cells:
+                out[name] = out.get(name, 0) + len(cells)
+        return out
+
+    def _bump_trainee_shifts(self, ws_settings, ws_smeny) -> dict[str, int]:
+        """Прибавить смены закрываемого месяца к счётчику каждого стажёра."""
+        counters = self._trainee_counters(ws_settings.col_values(1))
+        if not counters:
+            return {}
+        counts = self._shift_counts(ws_smeny.get("A1:AI60"))
+        updates, result = [], {}
+        for name, row in counters.items():
+            worked = counts.get(name, 0)
+            if not worked:
+                continue
+            was = ws_settings.acell(f"B{row}").value
+            try:
+                was = int(float(str(was).replace(",", ".").strip() or 0))
+            except ValueError:
+                was = 0
+            result[name] = was + worked
+            updates.append({"range": f"B{row}", "values": [[was + worked]]})
+        if updates:
+            ws_settings.batch_update(updates, value_input_option="USER_ENTERED")
+            logger.info("Стажёрские смены накоплены: %s", result)
+        return result
+
     # ── ЧИСТКА РУЧНЫХ ЯЧЕЕК ПРИ ЗАКРЫТИИ МЕСЯЦА ─────────────────────────────
     # Что считается ручным вводом. Ключ — начало подписи в колонке A (строчными),
     # значение — колонки, которые чистим. "auto" значит «C, если там введённое
@@ -474,15 +563,23 @@ class SheetsClient:
         # комментарий вводят в той же колонке, где сумма премии этого блока:
         # у менеджеров это C, у РОП и помощника — E (там же, где ручной ввод)
         "комментарий к доп.премии": "same",
-        "бонус за ведение сторис": "C",
         "факт — оборот": "E",
         "факт — поступления": "E",
-        "премия за контент": "E",
-        "клиенты smm": "E:G",
-        "найм:": "E:F",
-        "бонус за план найма": "E:F",
-        "премия за проекты": "E:F",
+        # ★16.10.2026 SMM (Ксения): подписчиков и премии вводит директор.
+        # У строки «Контент-план» чистим ТОЛЬКО D — в C формула D×ставка.
+        "живых подписчиков instagram": "D",
+        "контент-план — выполнено каналов": "D",
+        "премия за новых клиентов из соцсетей": "C:D",
+        "премия за залетевшие reels": "C:D",
+        # ★16.10.2026 индивидуальные условия (Виолетта): эти три строки каждый
+        # месяц заново пишет individual_kpi.py — старые цифры тянуть нельзя.
+        "звонки — норма": "D",
+        "дегустации — норма": "D",
+        "индивидуальный бонус": "C",
     }
+    # ★Убраны 16.10.2026: «бонус за ведение сторис» (строка Ксении — её блок
+    # стал SMM-блоком), «премия за контент», «клиенты smm», «найм:», «бонус за
+    # план найма», «премия за проекты» — всё это блок Влады, её больше нет.
     # ★НЕ чистим: «Конкурс (бонусы)» — раньше там стояла формула по листу КОНКУРС,
     # и чистка её убивала (бонус Дарьи перестал считаться после закрытия июля 2026);
     # «Факт — новые продажи» — это формула по листу НОВЫЕ_КЛИЕНТЫ, она сама
@@ -824,7 +921,17 @@ class SheetsClient:
 
         # Clear СМЕНЫ data (days only, formulas in col AJ stay)
         ws_smeny = sh.worksheet('СМЕНЫ')
-        ws_smeny.batch_clear(list(_SHIFT_DAY_RANGES))
+        clear_a1, _ = self._shift_ranges(ws_smeny)
+        # ★16.10.2026: ДО очистки копим стажёрские смены. Счётчик «смен отработано
+        # в прошлых месяцах» в НАСТРОЙКАХ обновлялся руками («Обновлять при
+        # закрытии месяца») — и в октябре остался нулём: София и Виолетта снова
+        # получили по 1700 за первые смены, хотя свои 7 выбрали ещё в сентябре.
+        # Правило Анны: 1700 — за ПЕРВЫЕ СЕМЬ смен за всё время, а не каждый месяц.
+        try:
+            self._bump_trainee_shifts(ws_settings, ws_smeny)
+        except Exception:
+            logger.exception("не удалось обновить счётчик стажёрских смен")
+        ws_smeny.batch_clear(clear_a1)
         next_label = _next_month_label(period)
         ws_smeny.update([[next_label]], 'A2')
 
@@ -837,17 +944,18 @@ class SheetsClient:
             def _grid(sid, r0, r1, c0, c1):
                 return {"sheetId": sid, "startRowIndex": r0, "endRowIndex": r1,
                         "startColumnIndex": c0, "endColumnIndex": c1}
-            # Осн. смены — строки 5-12 (0-инд 4..12), подработки — строки 17-19
-            # (0-инд 16..19); колонки E(4)…AI(35). Совпадает с _SHIFT_DAY_RANGES.
-            # Раскладка после добавления стажёров София/Виолетта (2026-09-01).
+            # ★16.10.2026: границы секций берём из САМОГО листа (подписи «ОСНОВНЫЕ
+            # СМЕНЫ» / «ПОДРАБОТКИ»), а не числами. Прежние 5-12 и 17-19 устарели
+            # после увольнения Лилии и Влады (стало 5-10 и 15-16): промоут копировал
+            # бы чужие строки, а подработки Алёны и РОП не переносились бы вовсе.
+            _, bounds = self._shift_ranges(ws_next)
             sh.batch_update({"requests": [
-                {"copyPaste": {"source": _grid(ws_next.id, 4, 12, 4, 35),
-                               "destination": _grid(ws_smeny.id, 4, 12, 4, 35),
-                               "pasteType": "PASTE_VALUES", "pasteOrientation": "NORMAL"}},
-                {"copyPaste": {"source": _grid(ws_next.id, 16, 19, 4, 35),
-                               "destination": _grid(ws_smeny.id, 16, 19, 4, 35),
-                               "pasteType": "PASTE_VALUES", "pasteOrientation": "NORMAL"}},
+                {"copyPaste": {"source": _grid(ws_next.id, r0, r1, 4, 35),
+                               "destination": _grid(ws_smeny.id, r0, r1, 4, 35),
+                               "pasteType": "PASTE_VALUES", "pasteOrientation": "NORMAL"}}
+                for r0, r1 in bounds
             ]})
+            logger.info("Промоут смен: секции строк %s", bounds)
             sh.del_worksheet(ws_next)
             logger.info("Promoted СМЕНЫ_СЛЕД → СМЕНЫ (overlap shifts) and removed temp sheet")
         except gspread.WorksheetNotFound:

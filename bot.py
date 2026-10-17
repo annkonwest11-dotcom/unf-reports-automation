@@ -282,8 +282,18 @@ def _is_avans_confirmed():
 
 
 def _read_payout_rows():
-    """Строки таблицы выплат (A154:D163) → [(имя, ЗП, офиц, наличные), …]."""
-    grid = _open_summary_ws().get("A154:D163", value_render_option="UNFORMATTED_VALUE")
+    """Строки таблицы выплат → [(имя, ЗП, офиц, наличные), …].
+
+    ★16.10.2026: диапазон ищется по подписи «ТАБЛИЦА ВЫПЛАТ», а не прошит
+    адресами — ведомость уехала со 154-163 на 114-122 и сводка приходила пустой.
+    """
+    import sync_avansy
+    ws = _open_summary_ws()
+    ledger = sync_avansy.ledger_rows(ws)
+    if not ledger:
+        return []
+    lo, hi = min(r for r, _ in ledger), max(r for r, _ in ledger)
+    grid = ws.get(f"A{lo}:D{hi}", value_render_option="UNFORMATTED_VALUE")
     rows = []
     for r in grid:
         name = (r[0] if r else "") or ""
@@ -307,18 +317,35 @@ async def _send_avans_summary(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
 
 async def _cash_start(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     """Запустить диалог наличного аванса: читает офиц.авансы (C), считает
-    предлагаемые суммы и начинает опрос по CASH_PLAN."""
+    предлагаемые суммы и начинает опрос по ведомости.
+
+    ★16.10.2026: строки ведомости ищутся по ФИО. Был жёсткий диапазон A154:D163
+    при ведомости на 114-122 — опрос предлагал нули и писал наличные мимо
+    таблицы."""
     import asyncio
+    import sync_avansy
     loop = asyncio.get_event_loop()
-    grid = await loop.run_in_executor(
-        None, lambda: _open_summary_ws().get(
-            "A154:D163", value_render_option="UNFORMATTED_VALUE"))
-    official = {}
-    for i, row in enumerate(grid):
-        official[154 + i] = row[2] if len(row) > 2 else None
+
+    def _read():
+        ws = _open_summary_ws()
+        ledger = sync_avansy.ledger_rows(ws)
+        if not ledger:
+            return [], {}
+        lo, hi = min(r for r, _ in ledger), max(r for r, _ in ledger)
+        grid = ws.get(f"A{lo}:D{hi}", value_render_option="UNFORMATTED_VALUE")
+        off = {}
+        for i, row in enumerate(grid):
+            off[lo + i] = row[2] if len(row) > 2 else None
+        return ledger, off
+
+    ledger, official = await loop.run_in_executor(None, _read)
+    if not ledger:
+        await context.bot.send_message(
+            chat_id, "⚠️ не нашёл таблицу выплат в СВОДНОЙ — наличные не спрашиваю")
+        return
 
     queue = []
-    for row, name, rule in cash_avans.CASH_PLAN:
+    for row, name, rule in cash_avans.build_plan(ledger):
         default = cash_avans.compute_default(rule, official.get(row))
         queue.append({"row": row, "name": name, "default": default,
                       "official": float(official.get(row) or 0)})
@@ -412,10 +439,13 @@ async def _cash_finish(context: ContextTypes.DEFAULT_TYPE):
     loop = asyncio.get_event_loop()
 
     def _write():
+        import sync_avansy
         ws = _open_summary_ws()
         updates = [{"range": f"D{row}", "values": [[amt if amt else ""]]}
                    for row, amt in results.items()]
-        updates.append({"range": "D154", "values": [[""]]})  # Дарья — без наличных
+        # у кого наличных не бывает (Дарья) — D чистим, строку берём из ведомости
+        for row in cash_avans.no_cash_rows(sync_avansy.ledger_rows(ws)):
+            updates.append({"range": f"D{row}", "values": [[""]]})
         if updates:
             ws.batch_update(updates, value_input_option="USER_ENTERED")
 
